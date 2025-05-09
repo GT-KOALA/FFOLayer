@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import pyepo
 
-from qpth.qp import QPFunction
+from qpthlocal.qp import QPFunction, QPSolvers
 
 def df_loss_fn(y_pred, y):
     # y: (batch_size, n)
@@ -23,7 +23,7 @@ def df_loss_fn(y_pred, y):
     b = torch.Tensor()
     
     # qpth solver
-    sol = QPFunction(verbose=False)(Q, p, G, h, A, b)
+    sol = QPFunction(solver=QPSolvers.CVXPY, verbose=False)(Q, p, G, h, A, b)
 
     # Compute loss
     loss = torch.mean(torch.bmm(sol.unsqueeze(1), y.unsqueeze(2)).squeeze(2))

@@ -9,14 +9,14 @@ import scipy
 import time
 import cvxpy
 # import solvers
-from qpth.solvers.pdipm import batch as pdipm_b
-from qpth.solvers.pdipm import spbatch as pdipm_spb
-from qpth.solvers.cvxpy import forward_single_np
+from qpthlocal.solvers.pdipm import batch as pdipm_b
+from qpthlocal.solvers.pdipm import spbatch as pdipm_spb
+from qpthlocal.solvers.cvxpy import forward_single_np
 from enum import Enum
 from utils import extract_nBatch, expandParam
 from typing import cast, List, Optional, Union
 
-from qpth.qp import QPSolvers
+from qpthlocal.qp import QPSolvers
 # from cvxpylayers.torch import CvxpyLayer
 
 # class QPSolvers(Enum):
@@ -33,7 +33,7 @@ from qpth.qp import QPSolvers
 #         self.solver = solver if solver is not None else QPSolvers.CVXPY
 #         self.lamb = lamb
 
-def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, solver=QPSolvers.PDIPM_BATCHED, lamb=100, check_Q_spd=True):
+def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, solver=QPSolvers.CVXPY, lamb=100, check_Q_spd=True):
 
     class QPFunctionFn(torch.autograd.Function):
         @staticmethod
@@ -106,6 +106,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, solver=QPSolvers.P
         def backward(ctx, grad_output):
             # Backward pass to compute gradients with respect to inputs
             zhats, lams, nus, Q_, p_, G_, h_, A_, b_ = ctx.saved_tensors
+            lams = torch.clamp(lams, min=0)
 
             nBatch = extract_nBatch(Q_, p_, G_, h_, A_, b_)
             # Formulate a different QP to solve
@@ -121,50 +122,62 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, solver=QPSolvers.P
             _, nineq, nz = G.size()
             neq = A.size(1) if A.nelement() > 0 else 0
 
-            # Randomly select a direction
-            # epsilon = 0.001 # 1/lamb
-            # delta_directions = torch.randn(nBatch, ctx.nz, 1).type_as(Q) * epsilon
             delta_directions = grad_output.unsqueeze(-1)
             zhats = zhats.unsqueeze(-1).detach()
-            # print('delta_directions shape', delta_directions.shape)
-            # print('grad output shape', grad_output.shape)
 
             # Iterative solution
-            # with torch.enable_grad():
-            #     newzhat = zhats.clone().detach().requires_grad_(True)
-            #     optimizer = torch.optim.Adam([newzhat], lr=0.01)
-            #     gd_maxiter = 1
-            #     for i in range(gd_maxiter):
-            #         objectives = (0.5 * newzhat.transpose(-1,-2) @ Q.detach() @ newzhat + (p.detach().unsqueeze(1) + delta_directions.transpose(-1,-2) / lamb) @ newzhat).squeeze(-1,-2)
-            #         violations = G.detach() @ newzhat - h.unsqueeze(-1)
-            #         active_constraints = (lams > 1e-5).unsqueeze(-1).float()
-            #         ineq_penalties = lams.unsqueeze(1) @ violations + 0.5 * lamb * torch.sum((violations * active_constraints) ** 2, dim=(-1,-2))
-            #         if neq > 0:
-            #             eq_penalties = torch.bmm(nus.unsqueeze(1), torch.bmm(A.detach(), newzhat.unsqueeze(-1)) - b.detach().unsqueeze(-1))
-            #         else:
-            #             eq_penalties = 0
-            #         # print('obj, vio, active_constraints, lamb, ineq_penality shape:', objectives.shape, violations.shape, active_constraints.shape, lamb, ineq_penalties.shape)
-            #         lagrangians = objectives + ineq_penalties + eq_penalties
-            #         loss = torch.sum(lagrangians)
-            #         loss.backward()
-            #         optimizer.step()
-            #         optimizer.zero_grad()
+            # print('newzhat shape:', zhats.shape)
+            # print('Q shape:', Q.shape)
+            iterative = False
+            if iterative:
+                with torch.enable_grad():
+                    newzhat = zhats.clone().detach().requires_grad_(True)
+                    optimizer = torch.optim.Adam([newzhat], lr=1e-3)
+                    gd_maxiter = 1 # int(np.sqrt(lamb) * 100)
+                    # print('dual solutions', lams)
+                    for i in range(gd_maxiter):
+                        objectives = (0.5 * newzhat.transpose(-1,-2) @ Q.detach() @ newzhat + (p.detach().unsqueeze(1) + delta_directions.transpose(-1,-2) / lamb) @ newzhat).squeeze(-1,-2)
+                        violations = G.detach() @ newzhat - h.unsqueeze(-1)
+                        active_constraints = (lams > 1e-5).unsqueeze(-1).float()
+                        ineq_penalties = lams.unsqueeze(1) @ violations + 0.5 * lamb * torch.sum((violations * active_constraints) ** 2, dim=(-1,-2))
+                        if neq > 0:
+                            eq_penalties = nus.unsqueeze(1) @ (A.detach() @ newzhat.unsqueeze(-1) - b.detach().unsqueeze(-1))
+                        else:
+                            eq_penalties = 0
+                        # print('obj, vio, active_constraints, lamb, ineq_penality shape:', objectives.shape, violations.shape, active_constraints.shape, lamb, ineq_penalties.shape)
+                        lagrangians = objectives + ineq_penalties + eq_penalties
+                        loss = torch.sum(lagrangians)
+                        # print('Iteration {}: loss: {}, obj: {}, violation: {}'.format(i, loss, objectives.mean(), violations.mean()))
+                        loss.backward()
+                        optimizer.step()
+                        optimizer.zero_grad()
 
-            # print('new zhat', newzhats.detach())
+                # print('new zhat', newzhats.detach())
 
-            # Clampping the dual solutions
-            # lams = torch.clamp(lams, max=100)
+                # Clampping the dual solutions
+                # lams = torch.clamp(lams, max=100)
 
-            # Deterministic solution by solving a new QP
-            # start_time = time.time()
-            active_constraints = (lams > 1e-3).unsqueeze(-1).float()
-            G_active = G * active_constraints
-            h_active = h.unsqueeze(-1) * active_constraints
-            newQ = Q + lamb * G_active.transpose(-1,-2) @ G_active
-            newp = p.unsqueeze(-1) + delta_directions / lamb - lamb * G_active.transpose(-1,-2) @ h_active + G.transpose(-1,-2) @ lams.unsqueeze(-1)
-            newzhat = torch.linalg.solve(newQ, -newp)
+            else:
+                # Deterministic solution by solving a new QP
+                temperature = 10
+                start_time = time.time()
+                active_constraints = torch.tanh(lams * temperature).unsqueeze(-1) 
+                # active_constraints = (lams > 1e-3).unsqueeze(-1).float()
+                G_active = G * active_constraints
+                h_active = h.unsqueeze(-1) * active_constraints
+                newQ = Q + lamb * G_active.transpose(-1,-2) @ G_active # + torch.eye(nz).repeat(nBatch, 1, 1).to(Q.device)
+                newp = p.unsqueeze(-1) + delta_directions / lamb - lamb * G_active.transpose(-1,-2) @ h_active + G.transpose(-1,-2) @ lams.unsqueeze(-1) # - zhats
+                print('newQ, newp shape:', newQ.shape, newp.shape)
+                print('A, b shape:', A.shape, b.shape)
+                if neq > 0:
+                    newQ = torch.cat((newQ, lamb * A), dim=1)
+                    newp = torch.cat((newp, - lamb * b.unsqueeze(-1)), dim=1)
+                # print('condition number:', torch.linalg.cond(newQ))
+                # newzhat = torch.linalg.solve(newQ, -newp)
+                newzhat = torch.linalg.lstsq(newQ, -newp, driver='gels').solution
+                # newzhat = - newQ.pinverse() @ newp
             # print('prediction', p)
-            # print('solution distance:', torch.linalg.norm(newzhat - zhats))
+            print('solution distance:', torch.linalg.norm(newzhat - zhats))
             # print(lams)
             # print(zhats)
             # print(newzhat)
@@ -187,10 +200,12 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, solver=QPSolvers.P
                 objectives = (0.5 * newzhat.transpose(-1,-2) @ Q_torch @ newzhat + p_torch.unsqueeze(1) @ newzhat).squeeze(-1,-2) # 1/2 * z^T Q z + p^T z
                 optimal_objectives = (0.5 * zhats.transpose(-1,-2) @ Q_torch @ zhats + p_torch.unsqueeze(1) @ zhats).squeeze(-1,-2) # 1/2 * z*^T Q z* + p^T z*
                 violations = G_torch @ newzhat - h.unsqueeze(-1) # G z - h
-                active_constraints = (lams > 1e-5).unsqueeze(-1).float()
+                active_constraints = torch.tanh(lams * temperature).unsqueeze(-1).float()
                 ineq_penalties = lams.unsqueeze(1) @ violations + 0.5 * lamb * torch.sum((violations * active_constraints) ** 2, dim=(-1,-2))
                 if neq > 0:
-                    eq_penalties = torch.bmm(nus.unsqueeze(1), torch.bmm(A_torch, newzhat.unsqueeze(-1)) - b_torch.unsqueeze(-1))
+                    eq_violations = A_torch @ newzhat - b_torch.unsqueeze(-1)
+                    eq_penalties = nus.unsqueeze(1) @ eq_violations # + 0.5 * lamb * torch.sum(eq_violations ** 2, dim=(-1,-2))
+                    print(eq_violations)
                 else:
                     eq_penalties = 0
                 # print('obj, vio, active_constraints, lamb, ineq_penality shape:', objectives.shape, violations.shape, active_constraints.shape, lamb, ineq_penalties.shape)

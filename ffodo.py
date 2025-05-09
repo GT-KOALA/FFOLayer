@@ -68,54 +68,54 @@ def _ffodoFn(
         @staticmethod
         def forward(ctx, *params):
             n_constraints = len(ineq_constraints)
-            params_numpy = [to_numpy(p) for p in params]
+            # params_numpy = [to_numpy(p) for p in params]
             # primal dual gradient descent
             # if z0 is not None:
             #     z0 = torch.tensor(z0, requires_grad=True) # Primal initialization
             # else:
-            z0 = torch.rand(n, requires_grad=True).detach().numpy() # Random primal initialization
-            constraints = ({'type': 'ineq', 'fun': lambda z: ineq_constraint(params_numpy, z)} for ineq_constraint in ineq_constraints)
-            sol = scipy.optimize.minimize(fun=lambda z: func(params_numpy, z),  # Objective function to minimize
-                                          x0=z0,  # Initial guess for the primal variable
-                                          constraints=constraints,  # Inequality constraints
-                                          method='COBYLA',
-                                          options={'maxiter': maxiter})
+            # z0 = torch.rand(n, requires_grad=True).detach().numpy() # Random primal initialization
+            # constraints = ({'type': 'ineq', 'fun': lambda z: ineq_constraint(params_numpy, z)} for ineq_constraint in ineq_constraints)
+            # sol = scipy.optimize.minimize(fun=lambda z: func(params_numpy, z),  # Objective function to minimize
+            #                               x0=z0,  # Initial guess for the primal variable
+            #                               constraints=constraints,  # Inequality constraints
+            #                               method='COBYLA',
+            #                               options={'maxiter': maxiter})
 
-            print('optimal solution:', sol.x)
-            print('optimal value:', func(params_numpy, sol.x))
+            # print('optimal solution:', sol.x)
+            # print('optimal value:', func(params_numpy, sol.x))
 
             # The iterative gradient descent method. This is not very stable
-            # with torch.enable_grad():
-            #     n_constraints = len(ineq_constraints)
-            #     # primal dual gradient descent
-            #     if z0 is not None:
-            #         z = torch.tensor(z0, requires_grad=True) # Primal initialization
-            #     else:
-            #         z = torch.rand(n, requires_grad=True) # Random primal initialization
+            with torch.enable_grad():
+                n_constraints = len(ineq_constraints)
+                # primal dual gradient descent
+                if z0 is not None:
+                    z = torch.tensor(z0).requires_grad_()  # Primal initialization
+                else:
+                    z = torch.rand((n,1), requires_grad=True) # Random primal initialization
 
-            #     if gamma0 is not None:
-            #         multipliers = torch.tensor(gamma0, requires_grad=True) # Dual initialization
-            #     else:
-            #         multipliers = torch.rand(n_constraints, requires_grad=True) # Random dual initialization
+                if gamma0 is not None:
+                    multipliers = torch.tensor(gamma0, requires_grad=True) # Dual initialization
+                else:
+                    multipliers = torch.rand(n_constraints, requires_grad=True) # Random dual initialization
 
-            #     optimizer_primal = torch.optim.Adam([z], lr=0.01)
-            #     optimizer_dual = torch.optim.Adam([multipliers], lr=0.001)
+                optimizer_primal = torch.optim.Adam([z], lr=0.01)
+                optimizer_dual = torch.optim.Adam([multipliers], lr=0.001)
 
-            #     for i in range(maxiter):
-            #         obj = func(params, z)  # Objective function
-            #         constraint_violations = [ineq_constraint(params, z) for ineq_constraint in ineq_constraints]  # Evaluate constraints
-            #         lagrangian = obj + sum([constraint_violations[i] * multipliers[i] for i in range(len(constraint_violations))])  # Lagrangian
+                for i in range(maxiter):
+                    obj = func(params, z)  # Objective function
+                    constraint_violations = [ineq_constraint(params, z) for ineq_constraint in ineq_constraints]  # Evaluate constraints
+                    lagrangian = obj + sum([constraint_violations[i] * multipliers[i] for i in range(len(constraint_violations))]) - torch.norm(multipliers)**2  # Lagrangian
 
-            #         lagrangian.backward()  # Backpropagation to compute gradients
-            #         optimizer_primal.step()
+                    lagrangian.backward()  # Backpropagation to compute gradients
+                    optimizer_primal.step()
 
-            #         multipliers.grad = - multipliers.grad # Update multipliers with negative gradient
-            #         optimizer_dual.step()
+                    multipliers.grad = - multipliers.grad # Update multipliers with negative gradient
+                    optimizer_dual.step()
 
-            #         multipliers.data.clamp_(min=0)  # Ensure multipliers are non-negative (for inequality constraints)
-            #         print('iteration', i, obj)
+                    multipliers.data.clamp_(min=0)  # Ensure multipliers are non-negative (for inequality constraints)
+                    print('iteration', i, obj)
 
-            # return z.detach(), multipliers.detach()  # Return the optimized primal variable
+            return z.detach(), multipliers.detach()  # Return the optimized primal variable
 
         @staticmethod
         def backward(ctx, grad_output):

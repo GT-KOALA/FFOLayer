@@ -16,7 +16,9 @@ class MLP(nn.Module):
 
     def forward(self, x):
         x = x.view(-1, self.input_dim)
+        # x = self.activation(self.fc1(x))
         x = self.activation(self.batch_norm1(self.fc1(x)))
+        # x = self.activation(self.fc2(x))
         x = self.activation(self.batch_norm2(self.fc2(x)))
         x = torch.clamp(self.fc3(x), min=-self.bound, max=self.bound)
         return x
