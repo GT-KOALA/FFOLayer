@@ -113,6 +113,7 @@ if __name__ == '__main__':
         forward_time = 0
         backward_time = 0
 
+        model.train()
         for i, (x, y) in enumerate(train_loader):
             start_time = time.time()
             y_pred = model(x)
@@ -157,6 +158,7 @@ if __name__ == '__main__':
                 z = sol[0]
                 loss = torch.mean(y * z) + ts_loss * ts_weight + torch.norm(z) * norm_weight
 
+            df_loss = torch.mean(y * z) # + ts_loss
             forward_time += time.time() - start_time
 
             start_time = time.time()
@@ -166,23 +168,24 @@ if __name__ == '__main__':
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
             if epoch > 0:
                 optimizer.step()
-            optimizer.zero_grad()
 
-            df_loss = torch.mean(y * z) # + ts_loss
+            optimizer.zero_grad()
 
             train_ts_loss_list.append(ts_loss.item())
             train_df_loss_list.append(df_loss.item())
 
         print('Forward time {}, backward time {}'.format(forward_time, backward_time))
 
-        for i, (x, y) in enumerate(test_loader):
-            y_pred = model(x)
-            z = qpth_layer(Q, y_pred.detach(), G, h, A, b)
-            ts_loss = loss_fn(y_pred, y)
-            df_loss = torch.mean(y * z) 
+        model.eval()
+        with torch.no_grad():
+            for i, (x, y) in enumerate(test_loader):
+                y_pred = model(x)
+                z = qpth_layer(Q, y_pred.detach(), G, h, A, b)
+                ts_loss = loss_fn(y_pred, y)
+                df_loss = torch.mean(y * z) 
 
-            test_ts_loss_list.append(ts_loss.item())
-            test_df_loss_list.append(df_loss.item())
+                test_ts_loss_list.append(ts_loss.item())
+                test_df_loss_list.append(df_loss.item())
 
         train_ts_loss = np.mean(train_ts_loss_list)
         train_df_loss = np.mean(train_df_loss_list)
