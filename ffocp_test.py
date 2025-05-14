@@ -47,7 +47,7 @@ class TestCvxpyLayer(unittest.TestCase):
         # solution.sum().backward()
 
         # Bilevel optimization layer
-        blolayer = BLOLayer(objective=objective, equality_functions=[], inequality_functions=inequality_functions, parameters=[A, b], variables=[x], lamb=10)
+        blolayer = BLOLayer(objective=objective, equality_functions=[], inequality_functions=inequality_functions, parameters=[A, b], variables=[x], lamb=100)
 
         # solve the problem
         blo_solution, = blolayer(A_tch, b_tch)

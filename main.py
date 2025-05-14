@@ -28,6 +28,7 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=0, help='random seed')
     parser.add_argument('--eps', type=float, default=0.1, help='lambda for ffoqp')
     parser.add_argument('--lr', type=float, default=0.01, help='learning rate')
+    parser.add_argument('--ydim', type=int, default=32, help='dimension of y')
     
     args = parser.parse_args()
 
@@ -43,7 +44,7 @@ if __name__ == '__main__':
     np.random.seed(seed)
 
     input_dim   = 640
-    output_dim  = 512
+    output_dim  = args.ydim
     n = output_dim
     num_samples = 2048
     batch_size = 32
@@ -94,6 +95,16 @@ if __name__ == '__main__':
 
     ffoqp_layer = ffoqp.ffoqp(lamb=lamb, verbose=-1)
     qpth_layer = QPFunction(verbose=-1)
+    directory = 'results/{}/'.format(method)
+    filename = '{}_lr{}_eps{}_seed{}.csv'.format(method, learning_rate, eps, seed)
+    if os.path.exists(directory + filename):
+        os.remove(directory + filename)
+
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+    file = open(directory + filename, 'w')
+    file.write('epoch, train_ts_loss, test_ts_loss, train_df_loss, test_df_loss, forward_time, backward_time\n')
 
     s = 0
     ts_weight = 0
@@ -101,20 +112,19 @@ if __name__ == '__main__':
     for epoch in range(num_epochs):
         train_ts_loss_list, test_ts_loss_list = [], []
         train_df_loss_list, test_df_loss_list = [], []
-        start_time = time.time()
+        forward_time = 0
+        backward_time = 0
+
         for i, (x, y) in enumerate(train_loader):
+            start_time = time.time()
             y_pred = model(x)
-            # y_pred.retain_grad()
             ts_loss = loss_fn(y_pred, y)
-            # df_loss = df_loss_fn(y_pred, y)
             if method == 'ffoqp':
-                # start_time = time.time()
                 z = ffoqp_layer(Q, y_pred, G, h, A, b)
                 loss = torch.mean(y * z) + ts_loss * ts_weight + torch.norm(z) * norm_weight
                 # if i % 100 == 0:
                 #     print('ffoqp time elapsed:', time.time() - start_time)
                 # start_time = time.time()
-                loss.backward()
                 # if i % 100 == 0:
                 #     print('ffoqp backward time elapsed:', time.time() - start_time)
 
@@ -141,19 +151,23 @@ if __name__ == '__main__':
                 # z = torch.zeros(n)
                 z = qpth_layer(Q, y_pred.detach(), G, h, A, b)
                 loss = ts_loss
-                loss.backward()
             elif method == 'qpth':
                 z = qpth_layer(Q, y_pred, G, h, A, b)
                 loss = torch.mean(y * z) + ts_loss * ts_weight + torch.norm(z) * norm_weight
-                loss.backward()
             elif method == 'cvxpylayer':
                 sol = layer(Q, y_pred, G, h)
                 z = sol[0]
                 loss = torch.mean(y * z) + ts_loss * ts_weight + torch.norm(z) * norm_weight
-                loss.backward()
+
+            forward_time += time.time() - start_time
+
+            start_time = time.time()
+            loss.backward()
+            backward_time += time.time() - start_time
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
-            optimizer.step()
+            if epoch > 0:
+                optimizer.step()
             optimizer.zero_grad()
 
             df_loss = torch.mean(y * z) # + ts_loss
@@ -161,7 +175,7 @@ if __name__ == '__main__':
             train_ts_loss_list.append(ts_loss.item())
             train_df_loss_list.append(df_loss.item())
 
-        print('time elapsed:', time.time() - start_time)
+        print('Forward time {}, backward time {}'.format(forward_time, backward_time))
 
         for i, (x, y) in enumerate(test_loader):
             y_pred = model(x)
@@ -182,5 +196,8 @@ if __name__ == '__main__':
         writer.add_scalar('Loss/DF/train', train_df_loss, epoch)
         writer.add_scalar('Loss/DF/test', test_df_loss, epoch)
 
+        file.write('{},{},{},{},{},{},{}\n'.format(epoch, train_ts_loss, test_ts_loss, train_df_loss, test_df_loss, forward_time, backward_time))
+
     writer.flush()
+    file.close()
 

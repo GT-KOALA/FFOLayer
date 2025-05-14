@@ -210,7 +210,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, lamb=100, check_Q_
                 else:
                     eq_penalties = 0
                 # print('obj, vio, active_constraints, lamb, ineq_penality shape:', objectives.shape, violations.shape, active_constraints.shape, lamb, ineq_penalties.shape)
-                lagrangians = upper_level_objectives / lamb + objectives - optimal_objectives + ineq_penalties + eq_penalties
+                lagrangians = upper_level_objectives / lamb + objectives - optimal_objectives + ineq_penalties # + eq_penalties
                 loss = torch.sum(lagrangians) * lamb
                 loss.backward()
 

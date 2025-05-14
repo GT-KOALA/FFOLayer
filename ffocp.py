@@ -2,18 +2,8 @@ import time
 import cvxpy as cp
 import numpy as np
 
-try:
-    import torch
-except ImportError:
-    raise ImportError("Unable to import torch. Please install at "
-                      "https://pytorch.org.")
-
-torch_major_version = int(torch.__version__.split('.')[0])
-if torch_major_version < 1:
-    raise ImportError("cvxpylayers requires PyTorch >= 1.0; please "
-                      "upgrade your installation of PyTorch, which is "
-                      "version %s." % torch.__version__)
-
+import torch
+from cvxtorch import TorchExpression
 
 class BLOLayer(torch.nn.Module):
     """A differentiable convex optimization layer
@@ -208,8 +198,8 @@ def _BLOLayerFn(
 
             equality_constraints = [equality_function == 0 for equality_function in equality_functions]
             inequality_constraints = [inequality_function <= 0 for inequality_function in inequality_functions]
-            print('equality_constraints', equality_constraints)
-            print('inequality_constraints', inequality_constraints)
+            # print('equality_constraints', equality_constraints)
+            # print('inequality_constraints', inequality_constraints)
 
             for i in range(ctx.batch_size):
                 if ctx.batch:
@@ -228,7 +218,7 @@ def _BLOLayerFn(
                     constraints=equality_constraints + inequality_constraints
                 )
 
-                problem.solve()
+                problem.solve(solver=cp.GUROBI)
                 sol_i = [v.value for v in variables]
                 equality_dual_i = [
                     c.dual_value for c in equality_constraints
@@ -251,19 +241,20 @@ def _BLOLayerFn(
             for v_id in range(len(variables)):
                 sol[v_id] = torch.cat(sol[v_id])
                 sol_numpy[v_id] = np.concatenate(sol_numpy[v_id])
-            for c_id in range(equality_constraints):
+            for c_id in range(len(equality_constraints)):
                 equality_dual[c_id] = np.concatenate(equality_dual[c_id])
-            for c_id in range(inequality_constraints):
+            for c_id in range(len(inequality_constraints)):
                 inequality_dual[c_id] = np.concatenate(inequality_dual[c_id])
 
             ctx.sol = sol
             ctx.sol_numpy = sol_numpy
             ctx.equality_dual = equality_dual
             ctx.inequality_dual = inequality_dual
-            ctx.params = params_numpy
+            ctx.params_numpy = params_numpy
+            ctx.params = params
             # sol = torch.cat(sol, dim=0)
 
-            return tuple([sol[x] for x in sol])
+            return tuple(sol)
 
         @staticmethod
         def backward(ctx, *dvars):
@@ -271,52 +262,71 @@ def _BLOLayerFn(
             # convert to numpy arrays
             dvars_numpy = [to_numpy(dvar) for dvar in dvars]
             
+            temperature = 10
             sol = ctx.sol_numpy
             equality_dual = ctx.equality_dual
             inequality_dual = ctx.inequality_dual
+            inequality_dual_tanh = [np.tanh(dual * temperature) for dual in inequality_dual]
+            params_numpy = ctx.params_numpy
             params = ctx.params
             batch = ctx.batch
             batch_size = ctx.batch_size
+            equality_constraints = [equality_function == 0 for equality_function in equality_functions]
             print('sol', sol)
             print('equality_dual', equality_dual)
             print('inequality_dual', inequality_dual)
 
-            inequality_dual_params = [
-                cp.Parameter(inequality_dual[c_id][0].shape) for c_id in range(len(inequality_functions))
-            ]
+            sol_lagrangian = [[] for v in variables]
+            grad_numpy = [[] for _ in param_order]
+
+            dvar_params = [cp.Parameter(shape=v.shape) for v in variables]
+            inequality_dual_params = [cp.Parameter(shape=v.shape) for v in inequality_functions]
+            inequality_dual_tanh_params = [cp.Parameter(shape=v.shape, nonneg=True) for v in inequality_functions]
+            equality_dual_params = [cp.Parameter(shape=v.shape) for v in equality_functions]
+
+
+            vars_dvars_product = cp.sum([dvar @ v for dvar, v in zip(dvar_params, variables)])
+            ineq_constraints_dual_product = cp.sum([dual @ ineq for dual, ineq in zip(inequality_dual_params, inequality_functions)])
+            dual_penalty = cp.sum([dual_tanh @ ineq**2 for dual, dual_tanh, ineq in zip(inequality_dual_params, inequality_dual_tanh_params, inequality_functions)])
+            new_objective = 1 / lamb * cp.sum(vars_dvars_product) + objective + ineq_constraints_dual_product + lamb * dual_penalty
+
+            problem = cp.Problem(cp.Minimize(new_objective), constraints=equality_constraints)
 
             for i in range(batch_size):
-                new_objective = objective
-                vars_dvars_product = cp.sum(
-                        [dvar[i] * v for dvar, v in zip(dvars, variables)]
-                        )
+                for j, _ in enumerate(param_order):
+                    param_order[j].value = params_numpy[j][i]
 
-                for c_id, ineq in zip(inequality_dual, inequality_functions):
-                    print('c_id', c_id)
-                    print('inequality_dual[c_id]', inequality_dual[c_id][i])
-                    print('ineq', ineq)
-                    print('variable', variables)
+                for j, _ in enumerate(variables):
+                    dvar_params[j].value = dvars_numpy[j][i]
 
-                ineq_constraints_dual_product = cp.sum(
-                        [inequality_dual[c_id][i] * ineq for c_id, ineq in zip(inequality_dual, inequality_functions)]
-                        )
+                for j, _ in enumerate(inequality_functions):
+                    inequality_dual_params[j].value = inequality_dual[j][i]
+                    inequality_dual_tanh_params[j].value = inequality_dual_tanh[j][i]
 
-                dual_penalty = cp.sum(
-                        [np.tanh(ineq_dual[i]) * ineq**2 for ineq_dual, ineq in zip(inequality_dual, inequality_functions)]
-                        )
+                for j, _ in enumerate(equality_functions):
+                    equality_dual_params[j].value = equality_dual[j][i]
 
-                # objective = 1/lamb * f(x,y) + (g(x,y) + \gamma^\top h(x,y)) + lamb * h(x,y)^2 * tanh(gamma)
-                new_objective = 1 / lamb * cp.sum(vars_dvars_product) + \
-                        objective + \
-                        cp.sum(inequality_dual_params[i] * ineq_constraints_dual_product) + \
-                        lamb * cp.sum(dual_penalty)
+                problem.solve(solver=cp.GUROBI)
+                sol_i_lagrangian = np.array([v.value for v in variables])
+                sol_i = np.array([sol[j][i] for j in range(len(variables))])
+                print('batch index', i)
+                print(problem)
+                print('forward solve solution', sol_i)
+                print('backward solve solution', sol_i_lagrangian)
+                print('solution distance', np.linalg.norm(sol_i_lagrangian - sol_i))
+                for j, v in enumerate(variables):
+                    sol_lagrangian[j].append(v.value[np.newaxis,:])
 
-                problem = cp.Problem(
-                    cp.Minimize(new_objective),
-                    constraints=equality_constraints
-                )
+            sol_lagrangian = [to_torch(np.concatenate(v), ctx.dtype, ctx.device) for v in sol_lagrangian]
+            inequality_dual_torch = [to_torch(v, ctx.dtype, ctx.device) for v in inequality_dual]
+            inequality_dual_tanh_torch = [to_torch(v, ctx.dtype, ctx.device) for v in inequality_dual_tanh]
+            equality_dual_torch = [to_torch(v, ctx.dtype, ctx.device) for v in equality_dual]
 
-                problem.solve()
+            torch_exp = TorchExpression(new_objective, provided_vars_list=variables + param_order + dvar_params + inequality_dual_params + inequality_dual_tanh_params + equality_dual_params).torch_expression
+            torch_res = torch_exp(*sol_lagrangian, *params, *dvars, *inequality_dual_torch, *inequality_dual_tanh_torch, *equality_dual_torch)
+
+            # print('torch expression', torch_exp.torch_expression)
+            # print('variable dict', torch_exp.variables_dictionary)
 
             # convert to torch tensors and incorporate info_backward
             grad = [to_torch(g, ctx.dtype, ctx.device) for g in grad_numpy]
