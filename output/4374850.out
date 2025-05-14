@@ -1,0 +1,36 @@
+---------------------------------------
+Begin Slurm Prolog: May-13-2025 22:30:40
+Job ID:    4374850
+User ID:   kwang692
+Account:   gts-kwang692
+Job name:  bilevel
+Partition: cpu-small
+QOS:       inferno
+---------------------------------------
+
+CondaError: Run 'conda init' before 'conda deactivate'
+
+echo
+ffoqp
+1
+10
+0.01
+0.001
+Traceback (most recent call last):
+  File "/storage/coda1/p-kwang692/0/kwang692/ffodo/main.py", line 14, in <module>
+    from torch.utils.tensorboard import SummaryWriter
+  File "/storage/home/hcoda1/9/kwang692/.conda/envs/bilevel/lib/python3.12/site-packages/torch/utils/tensorboard/__init__.py", line 1, in <module>
+    import tensorboard
+ModuleNotFoundError: No module named 'tensorboard'
+---------------------------------------
+Begin Slurm Epilog: May-13-2025 22:31:09
+Job ID:        4374850
+User ID:       kwang692
+Account:       gts-kwang692
+Job name:      bilevel
+Resources:     cpu=1,mem=8G,node=1
+Rsrc Used:     cput=00:00:36,vmem=0,walltime=00:00:36,mem=407620K,energy_used=0
+Partition:     cpu-small
+QOS:           inferno
+Nodes:         atl1-1-02-002-23-2
+---------------------------------------

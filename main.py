@@ -15,8 +15,6 @@ from torch.utils.tensorboard import SummaryWriter
 
 import ffoqp
 
-from AdamFFO import AdamFFO
-
 from loss import *
 from models import *
 from data import *
@@ -44,14 +42,14 @@ if __name__ == '__main__':
     np.random.seed(seed)
 
     input_dim   = 640
-    output_dim  = args.ydim
-    n = output_dim
+    ydim  = args.ydim
+    n = ydim
     num_samples = 2048
     batch_size = 32
 
-    train_loader, test_loader = genData(input_dim, output_dim, num_samples, batch_size)
+    train_loader, test_loader = genData(input_dim, ydim, num_samples, batch_size)
 
-    model = MLP(input_dim, output_dim)
+    model = MLP(input_dim, ydim)
     if method == 'ffoqp':
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0)
         # optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, weight_decay=1e-2)
@@ -96,7 +94,7 @@ if __name__ == '__main__':
     ffoqp_layer = ffoqp.ffoqp(lamb=lamb, verbose=-1)
     qpth_layer = QPFunction(verbose=-1)
     directory = 'results/{}/'.format(method)
-    filename = '{}_lr{}_eps{}_seed{}.csv'.format(method, learning_rate, eps, seed)
+    filename = '{}_ydim{}_lr{}_eps{}_seed{}.csv'.format(method, ydim, learning_rate, eps, seed)
     if os.path.exists(directory + filename):
         os.remove(directory + filename)
 
@@ -179,8 +177,9 @@ if __name__ == '__main__':
 
         for i, (x, y) in enumerate(test_loader):
             y_pred = model(x)
+            z = qpth_layer(Q, y_pred.detach(), G, h, A, b)
             ts_loss = loss_fn(y_pred, y)
-            df_loss = df_loss_fn(y_pred, y)
+            df_loss = torch.mean(y * z) 
 
             test_ts_loss_list.append(ts_loss.item())
             test_df_loss_list.append(df_loss.item())

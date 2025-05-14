@@ -1,0 +1,34 @@
+---------------------------------------
+Begin Slurm Prolog: May-13-2025 22:25:32
+Job ID:    4374797
+User ID:   kwang692
+Account:   gts-kwang692
+Job name:  bilevel
+Partition: cpu-small
+QOS:       inferno
+---------------------------------------
+
+CondaError: Run 'conda init' before 'conda deactivate'
+
+echo
+ffoqp
+1
+10
+0.01
+0.001
+Traceback (most recent call last):
+  File "/storage/coda1/p-kwang692/0/kwang692/ffodo/main.py", line 9, in <module>
+    from qpth.qp import QPFunction
+ModuleNotFoundError: No module named 'qpth'
+---------------------------------------
+Begin Slurm Epilog: May-13-2025 22:25:43
+Job ID:        4374797
+User ID:       kwang692
+Account:       gts-kwang692
+Job name:      bilevel
+Resources:     cpu=1,mem=8G,node=1
+Rsrc Used:     cput=00:00:19,vmem=0,walltime=00:00:19,mem=276680K,energy_used=0
+Partition:     cpu-small
+QOS:           inferno
+Nodes:         atl1-1-02-003-16-2
+---------------------------------------

@@ -1,0 +1,36 @@
+---------------------------------------
+Begin Slurm Prolog: May-13-2025 22:33:27
+Job ID:    4374864
+User ID:   kwang692
+Account:   gts-kwang692
+Job name:  bilevel
+Partition: cpu-small
+QOS:       inferno
+---------------------------------------
+
+CondaError: Run 'conda init' before 'conda deactivate'
+
+echo
+ffoqp
+1
+10
+0.01
+0.001
+Traceback (most recent call last):
+  File "/storage/coda1/p-kwang692/0/kwang692/ffodo/main.py", line 18, in <module>
+    from AdamFFO import AdamFFO
+  File "/storage/coda1/p-kwang692/0/kwang692/ffodo/AdamFFO.py", line 8, in <module>
+    from torch.optim.optimizer import (
+ImportError: cannot import name '_device_dtype_check_for_fused' from 'torch.optim.optimizer' (/storage/home/hcoda1/9/kwang692/.conda/envs/bilevel/lib/python3.12/site-packages/torch/optim/optimizer.py)
+---------------------------------------
+Begin Slurm Epilog: May-13-2025 22:33:47
+Job ID:        4374864
+User ID:       kwang692
+Account:       gts-kwang692
+Job name:      bilevel
+Resources:     cpu=1,mem=8G,node=1
+Rsrc Used:     cput=00:00:27,vmem=0,walltime=00:00:27,mem=410024K,energy_used=0
+Partition:     cpu-small
+QOS:           inferno
+Nodes:         atl1-1-02-002-23-2
+---------------------------------------

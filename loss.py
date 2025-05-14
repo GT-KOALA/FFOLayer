@@ -1,8 +1,7 @@
 import torch
 import numpy as np
-import pyepo
 
-from qpthlocal.qp import QPFunction, QPSolvers
+from qpth.qp import QPFunction, QPSolvers
 
 def df_loss_fn(y_pred, y):
     # y: (batch_size, n)
