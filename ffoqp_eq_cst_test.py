@@ -1,5 +1,5 @@
 # import ffodo
-import ffoqp
+import ffoqp_eq_cst
 import torch
 import numpy as np
 import unittest
@@ -56,7 +56,7 @@ class TestFFOQP(unittest.TestCase):
         # Create an instance of the FFOQP class
         # solver = QPSolvers.PDIPM_BATCHED
         # solver = QPSolvers.CVXPY
-        ffoqp_instance = ffoqp.ffoqp(lamb=100)
+        ffoqp_instance = ffoqp_eq_cst.ffoqp(alpha=100)
 
         # Forward pass through the FFOQP instance
         print('solving qp...')
@@ -124,7 +124,7 @@ class TestFFOQP(unittest.TestCase):
         # Create an instance of the FFOQP class
         # solver = QPSolvers.PDIPM_BATCHED
         # solver = QPSolvers.CVXPY
-        ffoqp_instance = ffoqp.ffoqp(lamb=100)
+        ffoqp_instance = ffoqp_eq_cst.ffoqp(alpha=100)
 
         # Forward pass through the FFOQP instance
         print('solving qp...')
