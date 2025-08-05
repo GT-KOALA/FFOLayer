@@ -1,10 +1,9 @@
-import diffcp
 import time
 import cvxpy as cp
 from cvxpy.reductions.solvers.conic_solvers.scs_conif import \
     dims_to_solver_dict
 import numpy as np
-from utils import \
+from cvxpylayers_local.utils import \
     ForwardContext, BackwardContext, forward_numpy, backward_numpy
 
 try:
@@ -20,8 +19,14 @@ if torch_major_version < 1:
                       "version %s." % torch.__version__)
 
 
-class BilevelLayer(torch.nn.Module):
-    """A differentiable bilevel optimization layer
+class CvxpyLayer(torch.nn.Module):
+    """A differentiable convex optimization layer
+
+    A CvxpyLayer solves a parametrized convex optimization problem given by a
+    CVXPY problem. It solves the problem in its forward pass, and it computes
+    the derivative of problem's solution map with respect to the parameters in
+    its backward pass. The CVPXY problem must be a disciplined parametrized
+    program.
 
     Example usage:
         ```
@@ -66,7 +71,7 @@ class BilevelLayer(torch.nn.Module):
           custom_method: A tuple of two custom methods for the forward and
                       backward pass.
         """
-        super(BilevelLayer, self).__init__()
+        super(CvxpyLayer, self).__init__()
         
         if custom_method is None:
             self._forward_numpy, self._backward_numpy = forward_numpy, backward_numpy
@@ -114,10 +119,8 @@ class BilevelLayer(torch.nn.Module):
             self.dgp2dcp = solving_chain.get(cp.reductions.Dgp2Dcp)
             self.param_ids = [p.id for p in self.compiler.parameters]
         else:
-            # data, _, _ = problem.get_problem_data(
-            #     solver=cp.SCS, solver_opts={'use_quad_obj': False})
             data, _, _ = problem.get_problem_data(
-                solver=cp.GUROBI, gp=False, solver_opts={'use_quad_obj': False})
+                solver=cp.SCS, solver_opts={'use_quad_obj': False})
             self.compiler = data[cp.settings.PARAM_PROB]
             self.param_ids = [p.id for p in self.param_order]
         self.cone_dims = dims_to_solver_dict(data["dims"])
@@ -143,7 +146,7 @@ class BilevelLayer(torch.nn.Module):
                              'parameter; received %d tensors, expected %d' % (
                                  len(params), len(self.param_ids)))
         info = {}
-        f = _BilevelLayerFn(
+        f = _CvxpyLayerFn(
             _forward_numpy=self._forward_numpy,
             _backward_numpy=self._backward_numpy,
             param_order=self.param_order,
@@ -172,7 +175,7 @@ def to_torch(x, dtype, device):
     return torch.from_numpy(x).type(dtype).to(device)
 
 
-def _BilevelLayerFn(
+def _CvxpyLayerFn(
         _forward_numpy,
         _backward_numpy,
         param_order,
@@ -185,7 +188,7 @@ def _BilevelLayerFn(
         dgp2dcp,
         solver_args,
         info):
-    class _BilevelLayerFnFn(torch.autograd.Function):
+    class _CvxpyLayerFnFn(torch.autograd.Function):
         @staticmethod
         def forward(ctx, *params):
             # infer dtype, device, and whether or not params are batched
@@ -318,4 +321,4 @@ def _BilevelLayerFn(
 
             return tuple(grad)
 
-    return _BilevelLayerFnFn.apply
+    return _CvxpyLayerFnFn.apply

@@ -4,7 +4,8 @@ import diffcp
 import time
 from dataclasses import dataclass
 from typing import Any
-import torch
+import importlib.util
+
 
 @dataclass
 class ForwardContext:
@@ -167,88 +168,6 @@ def backward_numpy(dvars_numpy, context):
         for i, sz in enumerate(context.batch_sizes):
             if sz == 0:
                 grad[i] = grad[i].sum(axis=0)
+    # import pdb; pdb.set_trace()
     
     return grad, info
-
-def forward_ffoqp(params_numpy, context):
-    """
-    Forward pass using FFOQP.
-
-    Parameters
-    ----------
-    params_numpy
-        Same semantics as the original implementation.
-    context
-        Unmodified cvxpylayers context object.
-
-    Returns
-    -------
-    sol : List[np.ndarray]
-        Primal solutions for each CVXPY variable.
-    info : dict
-        Timing / diagnostic information.
-    """
-    info = {}
-
-    # (1) Build batched QP tensors
-    t0 = time.time()
-    Q, p, G, h, A, b = _problem_to_qp(context, params_numpy)
-    info["canon_time"] = time.time() - t0
-    info["shapes"] = [tuple(Q.shape[-2:])] * context.batch_size  # placeholder
-
-    # (2) Solve and record autograd tape
-    t0 = time.time()
-    z_star = _QP_FUNCTION(Q, p, G, h, A, b)        # [batch, nz]
-    info["solve_time"] = time.time() - t0
-
-    # (3) Split solution back into original CVXPY variables
-    sol = [[] for _ in range(len(context.variables))]
-    for i in range(context.batch_size):
-        sltn_dict = context.compiler.split_solution(
-            z_star[i].detach().cpu().numpy(),
-            active_vars=context.var_dict)
-        for j, v in enumerate(context.variables):
-            sol[j].append(np.expand_dims(sltn_dict[v.id], 0))
-    sol = [np.concatenate(s, axis=0) for s in sol]
-    if not context.batch:
-        sol = [np.squeeze(s, 0) for s in sol]
-
-    return sol, info
-
-
-def backward_ffoqp(dvars_numpy, context):
-    """
-    Backward pass.
-
-    Because `_QP_FUNCTION` is differentiable, autograd gives us ∂z*/∂(Q,p,G,h,A,b)
-    automatically.  All we need to do here is:
-        * convert `dvars_numpy` into a torch gradient on `z*`
-        * run `.backward()`
-        * propagate sensitivities back to the original CVXPY parameters
-    """
-    # (1) Grab cached forward tensors
-    z_star = _QP_FUNCTION.saved_tensors[0]     # type: ignore[attr-defined]
-
-    # (2) Build upstream gradient
-    if not context.batch:
-        dvars_numpy = [np.expand_dims(g, 0) for g in dvars_numpy]
-    dz = torch.zeros_like(z_star)
-    for i in range(context.batch_size):
-        g_dict = {v.id: g[i] for v, g in zip(context.variables, dvars_numpy)}
-        dz[i] = torch.as_tensor(
-            context.compiler.join_adjoint(g_dict), dtype=torch.double)
-
-    # (3) Back‑prop through the QP solve
-    z_star.backward(dz)
-
-    # (4) Retrieve parameter grads from autograd
-    grads = []
-    for pid in context.param_ids:
-        param_tensor = context.param_id_to_tensor[pid]
-        grads.append(param_tensor.grad.detach().cpu().numpy())
-
-    if not context.batch:
-        grads = [g.squeeze(0) for g in grads]
-
-    info = {"grad_time": 0.0}  # placeholder
-    return grads, info

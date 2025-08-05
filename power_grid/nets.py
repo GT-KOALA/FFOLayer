@@ -33,7 +33,7 @@ def rmse_loss_weighted(mu_pred, Y_actual, weights):
 def run_rmse_net(model, variables, X_train, Y_train):
     opt = optim.Adam(model.parameters(), lr=1e-3)
 
-    for i in range(1000):
+    for i in range(1, 1001):
         opt.zero_grad()
         model.train()
         train_loss = nn.MSELoss()(
@@ -44,8 +44,8 @@ def run_rmse_net(model, variables, X_train, Y_train):
         model.eval()
         test_loss = nn.MSELoss()(
             model(variables['X_test_'])[0], variables['Y_test_'])
-
-        print(i, train_loss.item(), test_loss.item())
+        if i % 200 == 0:
+            print(i, train_loss.item(), test_loss.item())
 
     model.eval()
     model.set_sig(variables['X_train_'], variables['Y_train_'])
@@ -119,9 +119,8 @@ def batch_train_weightrmse(batch_sz, epoch, X_train_t, Y_train_t, model, opt, we
         print ('Epoch: {}, {}/{}'.format(epoch, i+batch_sz, X_train_t.size(0)))
        
 
-def run_task_net(model, variables, params, X_train, Y_train, args):
+def run_task_net(model, solver, variables, params, X_train, Y_train, args):
     opt = optim.Adam(model.parameters(), lr=1e-4)
-    solver = model_classes.SolveScheduling(params, task=args.task)
 
     # For early stopping
     prev_min = 0
@@ -151,8 +150,7 @@ def run_task_net(model, variables, params, X_train, Y_train, args):
 
         opt.step()
 
-        print(i, train_loss.sum().item(), test_loss.sum().item(), 
-            hold_loss.sum().item())
+        print(f"Epoch {i}, train_loss: {train_loss.sum().item():.2f}, test_loss: {test_loss.sum().item():.2f}, hold_loss: {hold_loss.sum().item():.2f}")
 
 
         # Early stopping
@@ -176,8 +174,7 @@ def run_task_net(model, variables, params, X_train, Y_train, args):
     return model
 
 
-def eval_net(which, model, variables, params, save_folder):
-    solver = model_classes.SolveScheduling(params)
+def eval_net(which, model, solver, variables, params, args, save_folder):
 
     model.eval()
     mu_pred_train, sig_pred_train = model(variables['X_train_'])

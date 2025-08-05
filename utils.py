@@ -112,9 +112,9 @@ def forward_single_np(Q, p, G, h, A, b):
         ineqCon = slacks = slacksCon = None
     cons = [x for x in [eqCon, ineqCon, slacksCon] if x is not None]
     prob = cp.Problem(obj, cons)
-    # prob.solve(solver=cp.GUROBI, verbose=True) # max_iters=5000)
+    prob.solve(solver=cp.GUROBI, verbose=False) # max_iters=5000)
     # prob.solve()
-    prob.solve(adaptive_rho = False)  # solver=cp.SCS, max_iters=5000, verbose=False)
+    # prob.solve(adaptive_rho = False)  # solver=cp.SCS, max_iters=5000, verbose=False)
     # prob.solve(solver=cp.SCS, max_iters=10000, verbose=True)
     assert('optimal' in prob.status)
     zhat = np.array(z_.value).ravel()

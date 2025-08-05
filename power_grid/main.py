@@ -27,7 +27,7 @@ from constants import *
 def main():
     parser = argparse.ArgumentParser(
         description='Run electricity scheduling task net experiments.')
-    parser.add_argument('--task', type=str, default='qpth', help='ffoqp, ffoqp_eq_cst, qpth')
+    parser.add_argument('--task', type=str, default='cvxpylayer', help='qpth, ffoqp, ffoqp_eq_cst, cvxpylayer')
     parser.add_argument('--save', type=str, 
         metavar='save-folder', help='prefix to add to save path')
     parser.add_argument('--nRuns', type=int, default=1,
@@ -91,14 +91,18 @@ def main():
 
         # Run and eval task-minimizing net, building off rmse net results.
         model_task = model_classes.Net(X_train2[:,:-1], Y_train2, [200, 200])
+        solver = model_classes.SolveScheduling(params, task=args.task)
+        
         if USE_GPU:
             model_task = model_task.cuda()
+        # first -- pretrain using rmse loss
         model_task = nets.run_rmse_net(
             model_task, variables_task, X_train2, Y_train2)
+        # second -- dfl training using task loss
         model_task = nets.run_task_net(
-            model_task, variables_task, params, X_train2, Y_train2, args)
+            model_task, solver, variables_task, params, X_train2, Y_train2, args)
 
-        nets.eval_net("task_net", model_task, variables_task, params, save_folder)
+        nets.eval_net("task_net", model_task, solver, variables_task, params, args, save_folder)
 
     # plot.plot_results(map(
     #     lambda x: os.path.join(base_save, str(x)), range(args.nRuns)), base_save)

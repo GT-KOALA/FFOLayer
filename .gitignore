@@ -1,5 +1,6 @@
 run/*
 output/*
+**/.vscode/*
 **/__pycache__/*
 **/base_results/*
 **/runs/*

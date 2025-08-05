@@ -4,6 +4,11 @@ import numpy as np
 import scipy.stats as st
 import operator
 from functools import reduce
+import sys
+import os
+
+# Add parent directory to path to import ffoqp
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 import torch.nn as nn
@@ -12,8 +17,12 @@ from torch.nn.parameter import Parameter
 import torch.optim as optim
 
 from qpth.qp import QPFunction
+import qpth
 from constants import *
-from bilevel_layer.bilevel_layer import FFOQOLayer
+import ffoqp
+import ffoqp_eq_cst
+from cvxpylayers_local.cvxpylayer import CvxpyLayer
+import cvxpy as cp
 
 class Net(nn.Module):
     def __init__(self, X, Y, hidden_layer_sizes):
@@ -126,13 +135,62 @@ class SolveSchedulingQP(nn.Module):
         G = self.G.unsqueeze(0).expand(nBatch, self.G.size(0), self.G.size(1))
         h = self.h.unsqueeze(0).expand(nBatch, self.h.size(0))
         
-        out = QPFunction(verbose=False)(Q, p, G, h, self.e, self.e)
+        # out = QPFunction(verbose=False, solver=qpth.qp.QPSolvers.CVXPY)(Q, p, G, h, self.e, self.e)
+        out = QPFunction(verbose=False, solver=qpth.qp.QPSolvers.PDIPM_BATCHED)(Q, p, G, h, self.e, self.e)
         return out
-    
+
+class SolveSchedulingCvxpyLayer(nn.Module):
+    """Use cvxpylayers to solve one SQP QP subproblem in batch."""
+    def __init__(self, params):
+        super().__init__()
+        self.c_ramp = params["c_ramp"]
+        self.n = params["n"]
+
+        D = np.eye(self.n - 1, self.n) - np.eye(self.n - 1, self.n, 1)
+        self.e = torch.DoubleTensor()
+        if USE_GPU:
+            self.e = self.e.cuda()
+
+        z = cp.Variable(self.n)  # decision variable
+
+        # Q_sqrt = cp.Parameter((self.n, self.n))
+        d = cp.Parameter(self.n, nonneg=True)
+        p = cp.Parameter(self.n)
+        Gc = cp.Constant(np.vstack([D, -D]).astype(np.float64))
+        hc = cp.Constant((self.c_ramp * np.ones((self.n-1)*2)).astype(np.float64))  
+
+        # objective = cp.Minimize(0.5 * cp.sum_squares(Q_sqrt @ z) + p @ z)
+        objective = cp.Minimize(0.5 * cp.sum(cp.multiply(d, cp.square(z))) + p @ z)
+        constraints = [Gc @ z <= hc]
+        problem = cp.Problem(objective, constraints)
+
+        self.layer = CvxpyLayer(problem,
+                                parameters=[d, p],
+                                variables=[z])
+
+    def forward(self, z0, mu, dg, d2g):
+        nBatch, n = z0.size()
+        assert n == self.n
+
+        # Q = torch.cat([torch.diag(d2g[i] + 1).unsqueeze(0) 
+        #     for i in range(nBatch)], 0).double() # (nBatch, n, n)
+        # Q_sqrt = torch.sqrt(Q) # (nBatch, n, n)
+        d = (d2g + 1).double()
+        p = (dg - d2g * z0 - mu).double() # (nBatch, n)
+
+        on_gpu = (d.device.type == 'cuda')
+        # "eps": 1e-10, 'max_iters': 100000
+        z_star, = self.layer(d, p, solver_args={"eps": 1e-10, "max_iters": 100000}) # why set eps to 1e-10 is better than 1e-12?
+        # out = QPFunction(verbose=False, solver=qpth.qp.QPSolvers.PDIPM_BATCHED)(Q, p, G, h, self.e, self.e)
+        # print("diff = ", (z_star - out).norm().item())
+        if on_gpu:
+            z_star = z_star.to(p.device)
+        return z_star
+
 
 class SolveSchedulingBL(nn.Module):
     """ Solve a single SQP iteration of the scheduling problem"""
-    def __init__(self, params):
+    def __init__(self, params, is_eq_cst=False):
         super(SolveSchedulingBL, self).__init__()
         self.c_ramp = params["c_ramp"]
         self.n = params["n"]
@@ -142,6 +200,7 @@ class SolveSchedulingBL(nn.Module):
         self.e = torch.DoubleTensor()
         if USE_GPU:
             self.e = self.e.cuda()
+        self.is_eq_cst = is_eq_cst
         
     def forward(self, z0, mu, dg, d2g):
         nBatch, n = z0.size()
@@ -152,7 +211,11 @@ class SolveSchedulingBL(nn.Module):
         G = self.G.unsqueeze(0).expand(nBatch, self.G.size(0), self.G.size(1))
         h = self.h.unsqueeze(0).expand(nBatch, self.h.size(0))
         
-        out = FFOQOLayer(verbose=False)(Q, p, G, h, self.e, self.e)
+        if self.is_eq_cst:
+            ffoqp_instance = ffoqp_eq_cst.ffoqp(alpha=100)
+        else:
+            ffoqp_instance = ffoqp.ffoqp(lamb=100)
+        out = ffoqp_instance(Q, p, G, h, self.e, self.e)
         return out
 
 class SolveScheduling(nn.Module):
@@ -180,12 +243,21 @@ class SolveScheduling(nn.Module):
         z0 = mu.detach() # Variable(1. * mu.data, requires_grad=False)
         mu0 = mu.detach() # Variable(1. * mu.data, requires_grad=False)
         sig0 = sig.detach() # Variable(1. * sig.data, requires_grad=False)
-        for i in range(20):
+        for i in range(2):
             dg = GLinearApprox(self.params["gamma_under"], 
                 self.params["gamma_over"])(z0, mu0, sig0)
             d2g = GQuadraticApprox(self.params["gamma_under"], 
                 self.params["gamma_over"])(z0, mu0, sig0)
-            z0_new = SolveSchedulingQP(self.params)(z0, mu0, dg, d2g)
+            if self.task == "qpth":
+                z0_new = SolveSchedulingQP(self.params)(z0, mu0, dg, d2g)
+            elif self.task == "cvxpylayer":
+                z0_new = SolveSchedulingCvxpyLayer(self.params)(z0, mu0, dg, d2g)
+            elif self.task == "ffoqp":
+                z0_new = SolveSchedulingBL(self.params, is_eq_cst=False)(z0, mu0, dg, d2g)
+            elif self.task == "ffoqp_eq_cst":
+                z0_new = SolveSchedulingBL(self.params, is_eq_cst=True)(z0, mu0, dg, d2g)
+            else:
+                raise ValueError(f"Invalid task: {self.task}")
             solution_diff = (z0-z0_new).norm().item()
             print("+ SQP Iter: {}, Solution diff = {}".format(i, solution_diff))
             z0 = z0_new
@@ -201,7 +273,11 @@ class SolveScheduling(nn.Module):
         
         if self.task == "qpth":
             return SolveSchedulingQP(self.params)(z0, mu, dg, d2g)
+        elif self.task == "cvxpylayer":
+            return SolveSchedulingCvxpyLayer(self.params)(z0, mu, dg, d2g)
         elif self.task == "ffoqp":
             return SolveSchedulingBL(self.params)(z0, mu, dg, d2g)
-        # elif self.task == "ffoqp_eq_cst":
-        #     return SolveSchedulingBL_EqCst(self.params)(z0, mu, dg, d2g)
+        elif self.task == "ffoqp_eq_cst":
+            return SolveSchedulingBL(self.params)(z0, mu, dg, d2g)
+        else:
+            raise ValueError(f"Invalid task: {self.task}")
