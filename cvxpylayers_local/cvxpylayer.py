@@ -55,7 +55,7 @@ class CvxpyLayer(torch.nn.Module):
         ```
     """
 
-    def __init__(self, problem, parameters, variables, gp=False, custom_method=None):
+    def __init__(self, problem, parameters, variables, gp=False, custom_method=None, lpgd=False):
         """Construct a CvxpyLayer
 
         Args:
@@ -70,6 +70,7 @@ class CvxpyLayer(torch.nn.Module):
           gp: Whether to parse the problem using DGP (True or False).
           custom_method: A tuple of two custom methods for the forward and
                       backward pass.
+          lpgd: Whether to use LPGD solver.
         """
         super(CvxpyLayer, self).__init__()
         
@@ -124,6 +125,7 @@ class CvxpyLayer(torch.nn.Module):
             self.compiler = data[cp.settings.PARAM_PROB]
             self.param_ids = [p.id for p in self.param_order]
         self.cone_dims = dims_to_solver_dict(data["dims"])
+        self.lpgd = lpgd
 
     def forward(self, *params, solver_args={}):
         """Solve problem (or a batch of problems) corresponding to `params`
@@ -159,6 +161,7 @@ class CvxpyLayer(torch.nn.Module):
             dgp2dcp=self.dgp2dcp,
             solver_args=solver_args,
             info=info,
+            lpgd=self.lpgd,
         )
         sol = f(*params)
         self.info = info
@@ -187,7 +190,8 @@ def _CvxpyLayerFn(
         gp,
         dgp2dcp,
         solver_args,
-        info):
+        info,
+        lpgd):
     class _CvxpyLayerFnFn(torch.autograd.Function):
         @staticmethod
         def forward(ctx, *params):
@@ -282,6 +286,7 @@ def _CvxpyLayerFn(
                 solver_args=solver_args,
                 variables=variables,
                 var_dict=var_dict,
+                lpgd=lpgd,
             )
             
             sol, info_forward = _forward_numpy(params_numpy, context)
@@ -311,6 +316,7 @@ def _CvxpyLayerFn(
                 params=ctx.params if gp else None,
                 old_params_to_new_params=ctx.old_params_to_new_params if gp else None,
                 sol=info['sol'] if gp else None,
+                lpgd=lpgd,
             )
 
             grad_numpy, info_backward = _backward_numpy(dvars_numpy, context)

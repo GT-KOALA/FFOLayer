@@ -1,6 +1,7 @@
 
 import numpy as np
 import diffcp
+import diffcp_lpgd
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -22,6 +23,7 @@ class ForwardContext:
     solver_args: dict
     variables: list
     var_dict: dict
+    lpgd: bool
 
 
 @dataclass
@@ -38,7 +40,7 @@ class BackwardContext:
     params: list
     old_params_to_new_params: dict
     sol: list
-    
+    lpgd: bool
     
 def forward_numpy(params_numpy, context):
     """Forward pass in numpy."""
@@ -80,11 +82,17 @@ def forward_numpy(params_numpy, context):
     start = time.time()
     try:
         if context.solve_and_derivative:
-            xs, _, _, _, DT_batch = diffcp.solve_and_derivative_batch(
-                As, bs, cs, cone_dicts, **context.solver_args)
+            if context.lpgd:
+                xs, _, _, _, DT_batch = diffcp_lpgd.solve_and_derivative_batch(
+                    As, bs, cs, cone_dicts, mode='lpgd', derivative_kwargs=dict(tau=0.1, rho=0.1), **context.solver_args)
+            else:
+                xs, _, _, _, DT_batch = diffcp.solve_and_derivative_batch(
+                    As, bs, cs, cone_dicts, **context.solver_args)
             info['DT_batch'] = DT_batch
         else:
-            xs, _, _ = diffcp.solve_only_batch(
+            # xs, _, _ = diffcp.solve_only_batch(
+            #     As, bs, cs, cone_dicts, **context.solver_args)
+            xs, _, _ = diffcp_lpgd.solve_only_batch(
                 As, bs, cs, cone_dicts, **context.solver_args)
     except diffcp.SolverError as e:
         print(

@@ -141,7 +141,7 @@ class SolveSchedulingQP(nn.Module):
 
 class SolveSchedulingCvxpyLayer(nn.Module):
     """Use cvxpylayers to solve one SQP QP subproblem in batch."""
-    def __init__(self, params):
+    def __init__(self, params, lpgd=False):
         super().__init__()
         self.c_ramp = params["c_ramp"]
         self.n = params["n"]
@@ -166,7 +166,8 @@ class SolveSchedulingCvxpyLayer(nn.Module):
 
         self.layer = CvxpyLayer(problem,
                                 parameters=[d, p],
-                                variables=[z])
+                                variables=[z],
+                                lpgd=lpgd)
 
     def forward(self, z0, mu, dg, d2g):
         nBatch, n = z0.size()
@@ -227,6 +228,10 @@ class SolveScheduling(nn.Module):
         self.c_ramp = params["c_ramp"]
         self.n = params["n"]
         self.task = task
+        if "lpgd" in task:
+            self.lpgd = True
+        else:
+            self.lpgd = False
         
         D = np.eye(self.n - 1, self.n) - np.eye(self.n - 1, self.n, 1)
         self.G = torch.tensor(np.vstack([D,-D]), dtype=torch.double, device=DEVICE)
@@ -243,15 +248,15 @@ class SolveScheduling(nn.Module):
         z0 = mu.detach() # Variable(1. * mu.data, requires_grad=False)
         mu0 = mu.detach() # Variable(1. * mu.data, requires_grad=False)
         sig0 = sig.detach() # Variable(1. * sig.data, requires_grad=False)
-        for i in range(2):
+        for i in range(20):
             dg = GLinearApprox(self.params["gamma_under"], 
                 self.params["gamma_over"])(z0, mu0, sig0)
             d2g = GQuadraticApprox(self.params["gamma_under"], 
                 self.params["gamma_over"])(z0, mu0, sig0)
             if self.task == "qpth":
                 z0_new = SolveSchedulingQP(self.params)(z0, mu0, dg, d2g)
-            elif self.task == "cvxpylayer":
-                z0_new = SolveSchedulingCvxpyLayer(self.params)(z0, mu0, dg, d2g)
+            elif self.task == "cvxpylayer" or self.task == "cvxpylayer_lpgd":
+                z0_new = SolveSchedulingCvxpyLayer(self.params, lpgd=self.lpgd)(z0, mu0, dg, d2g)
             elif self.task == "ffoqp":
                 z0_new = SolveSchedulingBL(self.params, is_eq_cst=False)(z0, mu0, dg, d2g)
             elif self.task == "ffoqp_eq_cst":
@@ -273,8 +278,8 @@ class SolveScheduling(nn.Module):
         
         if self.task == "qpth":
             return SolveSchedulingQP(self.params)(z0, mu, dg, d2g)
-        elif self.task == "cvxpylayer":
-            return SolveSchedulingCvxpyLayer(self.params)(z0, mu, dg, d2g)
+        elif self.task == "cvxpylayer" or self.task == "cvxpylayer_lpgd":
+            return SolveSchedulingCvxpyLayer(self.params, lpgd=self.lpgd)(z0, mu, dg, d2g)
         elif self.task == "ffoqp":
             return SolveSchedulingBL(self.params)(z0, mu, dg, d2g)
         elif self.task == "ffoqp_eq_cst":

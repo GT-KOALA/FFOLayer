@@ -27,7 +27,7 @@ from constants import *
 def main():
     parser = argparse.ArgumentParser(
         description='Run electricity scheduling task net experiments.')
-    parser.add_argument('--task', type=str, default='cvxpylayer', help='qpth, ffoqp, ffoqp_eq_cst, cvxpylayer')
+    parser.add_argument('--task', type=str, default='cvxpylayer_lpgd', help='qpth, ffoqp, ffoqp_eq_cst, cvxpylayer, cvxpylayer_lpgd')
     parser.add_argument('--save', type=str, 
         metavar='save-folder', help='prefix to add to save path')
     parser.add_argument('--nRuns', type=int, default=1,
