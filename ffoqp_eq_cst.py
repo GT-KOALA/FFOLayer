@@ -12,7 +12,7 @@ import cvxpy
 # from qpthlocal.solvers.pdipm import batch as pdipm_b
 # from qpthlocal.solvers.pdipm import spbatch as pdipm_spb
 # from qpthlocal.solvers.cvxpy import forward_single_np
-from utils import forward_single_np_eq_cst
+from utils import forward_single_np_eq_cst, forward_batch_np
 from enum import Enum
 from utils import extract_nBatch, expandParam
 from typing import cast, List, Optional, Union
@@ -33,7 +33,7 @@ from typing import cast, List, Optional, Union
 #         self.solver = solver if solver is not None else QPSolvers.CVXPY
 #         self.lamb = lamb
 
-def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=True):
+def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=True, chunk_size=100):
     """ -> kamo
     change lamb to alpha to prevent confusion
     """
@@ -69,18 +69,31 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
             #         Q, p, G, h, A, b, ctx.Q_LU, ctx.S_LU, ctx.R,
             #         eps, verbose, notImprovedLim, maxIter)
             # elif solver == QPSolvers.CVXPY:
-            vals = torch.Tensor(nBatch).type_as(Q)
+            # vals = torch.Tensor(nBatch).type_as(Q)
             zhats = torch.Tensor(nBatch, ctx.nz).type_as(Q)
             lams = torch.Tensor(nBatch, ctx.nineq).type_as(Q)
             nus = torch.Tensor(nBatch, ctx.neq).type_as(Q) \
                 if ctx.neq > 0 else torch.Tensor()
             slacks = torch.Tensor(nBatch, ctx.nineq).type_as(Q)
 
-            for i in range(nBatch):
-                Ai, bi = (A[i], b[i]) if neq > 0 else (None, None)
-                vals[i], zhati, nui, lami, si = forward_single_np_eq_cst(
-                    *[x.cpu().numpy() if x is not None else None
-                    for x in (Q[i], p[i], G[i], h[i], Ai, bi)])
+            for i in range(0, nBatch, chunk_size):
+                if chunk_size > 1:
+                    size = min(chunk_size, nBatch - i)
+                    Ai, bi = (A[i:i+size], b[i:i+size]) if neq > 0 else (None, None)
+                    _, zhati, nui, lami, si = forward_batch_np(
+                        *[x.cpu().numpy() if x is not None else None
+                          for x in (Q[i:i+size], p[i:i+size], G[i:i+size], h[i:i+size], Ai, bi)])
+                    # zhats[i:i+size] = torch.Tensor(zhati)
+                    # lams[i:i+size] = torch.Tensor(lami)
+                    # slacks[i:i+size] = torch.Tensor(si)
+                    # if neq > 0:
+                    #     nus[i:i+size] = torch.Tensor(nui)
+                    i = slice(i, i + size)
+                else:
+                    Ai, bi = (A[i], b[i]) if neq > 0 else (None, None)
+                    _, zhati, nui, lami, si = forward_single_np(
+                        *[x.cpu().numpy() if x is not None else None
+                          for x in (Q[i], p[i], G[i], h[i], Ai, bi)])
                 # if zhati[0] is None:
                 #     import IPython, sys; IPython.embed(); sys.exit(-1)
                 zhats[i] = torch.Tensor(zhati)
@@ -89,7 +102,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                 if neq > 0:
                     nus[i] = torch.Tensor(nui)
 
-            ctx.vals = vals
+            # ctx.vals = vals
             ctx.lams = lams
             ctx.nus = nus
             ctx.slacks = slacks
@@ -145,14 +158,21 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                 G_active = torch.cat((G_active, A), dim=1)
                 h_active = torch.cat((h_active, b.unsqueeze(-1)), dim=1)
 
-            for i in range(nBatch):
-                _, zhati, nui, _, _ = forward_single_np_eq_cst(
-                    *[x.cpu().numpy() if x is not None else None
-                      for x in (Q[i], newp[i, :, 0], None, None, G_active[i], h_active[i, :, 0])])
+            for i in range(0, nBatch, chunk_size):
+                if chunk_size > 1:
+                    size = min(chunk_size, nBatch - i)
+                    i = slice(i, i + size)
+                    _, zhati, nui, _, _ = forward_batch_np(
+                        *[x.cpu().numpy() if x is not None else None
+                          for x in (Q[i], newp[i, :, 0], None, None, G_active[i], h_active[i, :, 0])])
+                else:
+                    _, zhati, nui, _, _ = forward_single_np(
+                        *[x.cpu().numpy() if x is not None else None
+                          for x in (Q[i], newp[i, :, 0], None, None, G_active[i], h_active[i, :, 0])])
 
                 newzhat[i, :, 0] = torch.Tensor(zhati)
-                newlam[i] = torch.Tensor(nui[:nineq])
-                newnu[i] = torch.Tensor(nui[nineq:])
+                newlam[i] = torch.Tensor(nui[..., :nineq])
+                newnu[i] = torch.Tensor(nui[..., nineq:])
 
             start_time = time.time()
             with torch.enable_grad():

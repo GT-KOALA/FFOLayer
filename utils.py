@@ -7,6 +7,7 @@ import cvxpy as cp
 import tracemalloc
 import os
 import linecache
+from scipy.linalg import block_diag
 
 def extract_nBatch(Q, p, G, h, A, b):
     dims = [3, 2, 3, 2, 3, 2]
@@ -147,9 +148,9 @@ def forward_single_np_eq_cst(Q, p, G, h, A, b):
         ineqCon = slacks = slacksCon = None
     cons = [x for x in [eqCon, ineqCon, slacksCon] if x is not None]
     prob = cp.Problem(obj, cons)
-    # prob.solve(solver=cp.GUROBI, verbose=True) # max_iters=5000)
+    prob.solve(solver=cp.GUROBI, verbose=True) # max_iters=5000)
     # prob.solve()
-    prob.solve(adaptive_rho = False)  # solver=cp.SCS, max_iters=5000, verbose=False)
+    # prob.solve(adaptive_rho = False)  # solver=cp.SCS, max_iters=5000, verbose=False)
     # prob.solve(solver=cp.SCS, max_iters=10000, verbose=True)
     assert('optimal' in prob.status)
     zhat = np.array(z_.value).ravel()
@@ -157,6 +158,54 @@ def forward_single_np_eq_cst(Q, p, G, h, A, b):
     if ineqCon is not None:
         lam = np.array(ineqCon.dual_value).ravel()
         slacks = np.array(slacks.value).ravel()
+    else:
+        lam = slacks = None
+
+    return prob.value, zhat, nu, lam, slacks
+
+
+def forward_batch_np(Q, p, G, h, A, b):
+    """ -> kamo
+    Q : (nb, nz, nz)
+    p : (nb, nz)
+    G : (nb, nineq, nz)
+    h : (nb, nineq)
+    A : (nb, neq, nz)
+    b : (nb, neq)
+    """
+    nb = p.shape[0]
+    nz, neq, nineq = p.shape[1], A.shape[1] if A is not None else 0, G.shape[1] if G is not None else 0
+
+    z_ = cp.Variable(nz * nb)
+    Q_ = block_diag(*Q)
+    p_ = p.reshape(-1)
+
+    obj = cp.Minimize(0.5 * cp.quad_form(z_, Q_) + p_.T @ z_)
+    eqCon = None
+    if neq > 0:
+        A_ = block_diag(*A)
+        b_ = b.reshape(-1)
+        eqCon = A_ @ z_ == b_
+    if nineq > 0:
+        slacks = cp.Variable(nineq * nb)
+        G_ = block_diag(*G)
+        h_ = h.reshape(-1)
+        ineqCon = G_ @ z_ + slacks == h_
+        slacksCon = slacks >= 0
+    else:
+        ineqCon = slacks = slacksCon = None
+    cons = [x for x in [eqCon, ineqCon, slacksCon] if x is not None]
+    prob = cp.Problem(obj, cons)
+    prob.solve(solver=cp.GUROBI, verbose=False) # max_iters=5000)
+    # prob.solve()
+    # prob.solve(adaptive_rho = False)  # solver=cp.SCS, max_iters=5000, verbose=False)
+    # prob.solve(solver=cp.SCS, max_iters=10000, verbose=True)
+    assert('optimal' in prob.status)
+    zhat = np.array(z_.value).reshape(nb, nz)
+    nu = np.array(eqCon.dual_value).reshape(nb, neq) if eqCon is not None else None
+    if ineqCon is not None:
+        lam = np.array(ineqCon.dual_value).reshape(nb, nineq)
+        slacks = np.array(slacks.value).reshape(nb, nineq)
     else:
         lam = slacks = None
 
