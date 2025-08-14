@@ -21,6 +21,8 @@ import qpth
 from constants import *
 import ffoqp
 import ffoqp_eq_cst
+import ffoqp_eq_cst_parallelize
+import ffoqp_eq_cst_pdipm
 from cvxpylayers_local.cvxpylayer import CvxpyLayer
 import cvxpy as cp
 
@@ -74,7 +76,7 @@ def GLinearApprox(gamma_under, gamma_over):
         def backward(ctx, grad_output):
             z, mu, sig = ctx.saved_tensors
             p = st.norm(mu.cpu().numpy(),sig.cpu().numpy())
-            pz = torch.tensor(p.pdf(z.cpu().numpy()), dtype=torch.double, device=DEVICE)
+            pz = torch.tensor(p.pdf(z.cpu().numpy()), dtype=torch.double, device=z.device)
             
             dz = (gamma_under + gamma_over) * pz
             dmu = -dz
@@ -101,7 +103,7 @@ def GQuadraticApprox(gamma_under, gamma_over):
         def backward(ctx, grad_output):
             z, mu, sig = ctx.saved_tensors
             p = st.norm(mu.cpu().numpy(),sig.cpu().numpy())
-            pz = torch.tensor(p.pdf(z.cpu().numpy()), dtype=torch.double, device=DEVICE)
+            pz = torch.tensor(p.pdf(z.cpu().numpy()), dtype=torch.double, device=z.device)
             
             dz = -(gamma_under + gamma_over) * (z-mu) / (sig**2) * pz
             dmu = -dz
@@ -115,13 +117,13 @@ def GQuadraticApprox(gamma_under, gamma_over):
 
 class SolveSchedulingQP(nn.Module):
     """ Solve a single SQP iteration of the scheduling problem"""
-    def __init__(self, params):
+    def __init__(self, params, device=DEVICE):
         super(SolveSchedulingQP, self).__init__()
         self.c_ramp = params["c_ramp"]
         self.n = params["n"]
         D = np.eye(self.n - 1, self.n) - np.eye(self.n - 1, self.n, 1)
-        self.G = torch.tensor(np.vstack([D,-D]), dtype=torch.double, device=DEVICE)
-        self.h = (self.c_ramp * torch.ones((self.n - 1) * 2, device=DEVICE)).double()
+        self.G = torch.tensor(np.vstack([D,-D]), dtype=torch.double, device=device)
+        self.h = (self.c_ramp * torch.ones((self.n - 1) * 2, device=device)).double()
         self.e = torch.DoubleTensor()
         if USE_GPU:
             self.e = self.e.cuda()
@@ -188,20 +190,20 @@ class SolveSchedulingCvxpyLayer(nn.Module):
             z_star = z_star.to(p.device)
         return z_star
 
-
 class SolveSchedulingBL(nn.Module):
     """ Solve a single SQP iteration of the scheduling problem"""
-    def __init__(self, params, is_eq_cst=False):
+    def __init__(self, params, is_eq_cst=False, device=DEVICE, chunk_size=10):
         super(SolveSchedulingBL, self).__init__()
         self.c_ramp = params["c_ramp"]
         self.n = params["n"]
         D = np.eye(self.n - 1, self.n) - np.eye(self.n - 1, self.n, 1)
-        self.G = torch.tensor(np.vstack([D,-D]), dtype=torch.double, device=DEVICE)
-        self.h = (self.c_ramp * torch.ones((self.n - 1) * 2, device=DEVICE)).double()
+        self.G = torch.tensor(np.vstack([D,-D]), dtype=torch.double, device=device)
+        self.h = (self.c_ramp * torch.ones((self.n - 1) * 2, device=device)).double()
         self.e = torch.DoubleTensor()
         if USE_GPU:
             self.e = self.e.cuda()
         self.is_eq_cst = is_eq_cst
+        self.chunk_size = chunk_size
         
     def forward(self, z0, mu, dg, d2g):
         nBatch, n = z0.size()
@@ -213,7 +215,9 @@ class SolveSchedulingBL(nn.Module):
         h = self.h.unsqueeze(0).expand(nBatch, self.h.size(0))
         
         if self.is_eq_cst:
-            ffoqp_instance = ffoqp_eq_cst.ffoqp(alpha=100)
+            # ffoqp_instance = ffoqp_eq_cst.ffoqp(alpha=100, chunk_size=self.chunk_size)
+            # ffoqp_instance = ffoqp_eq_cst_parallelize.ffoqp(alpha=100, chunk_size=self.chunk_size)
+            ffoqp_instance = ffoqp_eq_cst_pdipm.ffoqp(alpha=100, chunk_size=self.chunk_size)
         else:
             ffoqp_instance = ffoqp.ffoqp(lamb=100)
         out = ffoqp_instance(Q, p, G, h, self.e, self.e)
@@ -222,7 +226,7 @@ class SolveSchedulingBL(nn.Module):
 class SolveScheduling(nn.Module):
     """ Solve the entire scheduling problem, using sequential quadratic 
         programming. """
-    def __init__(self, params, task):
+    def __init__(self, params, task, device=DEVICE, args=None):
         super(SolveScheduling, self).__init__()
         self.params = params
         self.c_ramp = params["c_ramp"]
@@ -234,9 +238,11 @@ class SolveScheduling(nn.Module):
             self.lpgd = False
         
         D = np.eye(self.n - 1, self.n) - np.eye(self.n - 1, self.n, 1)
-        self.G = torch.tensor(np.vstack([D,-D]), dtype=torch.double, device=DEVICE)
-        self.h = (self.c_ramp * torch.ones((self.n - 1) * 2, device=DEVICE)).double()
+        self.G = torch.tensor(np.vstack([D,-D]), dtype=torch.double, device=device)
+        self.h = (self.c_ramp * torch.ones((self.n - 1) * 2, device=device)).double()
         self.e = torch.DoubleTensor()
+        self.device = device
+        self.args = args
         if USE_GPU:
             self.e = self.e.cuda()
         
@@ -256,11 +262,11 @@ class SolveScheduling(nn.Module):
             if self.task == "qpth":
                 z0_new = SolveSchedulingQP(self.params)(z0, mu0, dg, d2g)
             elif self.task == "cvxpylayer" or self.task == "cvxpylayer_lpgd":
-                z0_new = SolveSchedulingCvxpyLayer(self.params, lpgd=self.lpgd)(z0, mu0, dg, d2g)
+                z0_new = SolveSchedulingCvxpyLayer(self.params, lpgd=self.lpgd, device=self.device)(z0, mu0, dg, d2g)
             elif self.task == "ffoqp":
-                z0_new = SolveSchedulingBL(self.params, is_eq_cst=False)(z0, mu0, dg, d2g)
+                z0_new = SolveSchedulingBL(self.params, is_eq_cst=False, device=self.device, chunk_size=self.args.chunk_size)(z0, mu0, dg, d2g)
             elif self.task == "ffoqp_eq_cst":
-                z0_new = SolveSchedulingBL(self.params, is_eq_cst=True)(z0, mu0, dg, d2g)
+                z0_new = SolveSchedulingBL(self.params, is_eq_cst=True, device=self.device, chunk_size=self.args.chunk_size)(z0, mu0, dg, d2g)
             else:
                 raise ValueError(f"Invalid task: {self.task}")
             solution_diff = (z0-z0_new).norm().item()
@@ -277,12 +283,12 @@ class SolveScheduling(nn.Module):
             self.params["gamma_over"])(z0, mu, sig)
         
         if self.task == "qpth":
-            return SolveSchedulingQP(self.params)(z0, mu, dg, d2g)
+            return SolveSchedulingQP(self.params, device=self.device)(z0, mu, dg, d2g)
         elif self.task == "cvxpylayer" or self.task == "cvxpylayer_lpgd":
             return SolveSchedulingCvxpyLayer(self.params, lpgd=self.lpgd)(z0, mu, dg, d2g)
         elif self.task == "ffoqp":
-            return SolveSchedulingBL(self.params)(z0, mu, dg, d2g)
+            return SolveSchedulingBL(self.params, device=self.device)(z0, mu, dg, d2g)
         elif self.task == "ffoqp_eq_cst":
-            return SolveSchedulingBL(self.params)(z0, mu, dg, d2g)
+            return SolveSchedulingBL(self.params, device=self.device)(z0, mu, dg, d2g)
         else:
             raise ValueError(f"Invalid task: {self.task}")

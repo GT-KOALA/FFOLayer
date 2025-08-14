@@ -91,7 +91,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                     i = slice(i, i + size)
                 else:
                     Ai, bi = (A[i], b[i]) if neq > 0 else (None, None)
-                    _, zhati, nui, lami, si = forward_single_np(
+                    _, zhati, nui, lami, si = forward_single_np_eq_cst(
                         *[x.cpu().numpy() if x is not None else None
                           for x in (Q[i], p[i], G[i], h[i], Ai, bi)])
                 # if zhati[0] is None:
@@ -136,6 +136,8 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
             A, A_e = expandParam(A_, nBatch, 3)
             b, b_e = expandParam(b_, nBatch, 2)
 
+            Q, p, G, h, A, b = Q.to(zhats.device), p.to(zhats.device), G.to(zhats.device), h.to(zhats.device), A.to(zhats.device), b.to(zhats.device)
+
             # Running gradient descent for a few iterations
             _, nineq, nz = G.size()
             neq = A.size(1) if A.nelement() > 0 else 0
@@ -166,7 +168,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                         *[x.cpu().numpy() if x is not None else None
                           for x in (Q[i], newp[i, :, 0], None, None, G_active[i], h_active[i, :, 0])])
                 else:
-                    _, zhati, nui, _, _ = forward_single_np(
+                    _, zhati, nui, _, _ = forward_single_np_eq_cst(
                         *[x.cpu().numpy() if x is not None else None
                           for x in (Q[i], newp[i, :, 0], None, None, G_active[i], h_active[i, :, 0])])
 

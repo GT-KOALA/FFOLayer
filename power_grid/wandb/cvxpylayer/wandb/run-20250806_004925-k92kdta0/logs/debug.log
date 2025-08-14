@@ -19,3 +19,4 @@ config: {'task': 'cvxpylayer', 'save': None, 'nRuns': 1, 'seed': 0, '_wandb': {'
 2025-08-06 00:49:26,733 INFO    MainThread:1878822 [wandb_run.py:_redirect():2375] Wrapping output streams.
 2025-08-06 00:49:26,733 INFO    MainThread:1878822 [wandb_run.py:_redirect():2398] Redirects installed.
 2025-08-06 00:49:26,737 INFO    MainThread:1878822 [wandb_init.py:init():1075] run started, returning control to user process
+2025-08-06 02:06:13,197 INFO    MsgRouterThr:1878822 [mailbox.py:close():129] [no run ID] Closing mailbox, abandoning 1 handles.

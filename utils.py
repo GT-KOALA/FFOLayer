@@ -9,6 +9,8 @@ import os
 import linecache
 from scipy.linalg import block_diag
 
+n_threads = os.cpu_count()
+
 def extract_nBatch(Q, p, G, h, A, b):
     dims = [3, 2, 3, 2, 3, 2]
     params = [Q, p, G, h, A, b]
@@ -148,7 +150,8 @@ def forward_single_np_eq_cst(Q, p, G, h, A, b):
         ineqCon = slacks = slacksCon = None
     cons = [x for x in [eqCon, ineqCon, slacksCon] if x is not None]
     prob = cp.Problem(obj, cons)
-    prob.solve(solver=cp.GUROBI, verbose=True) # max_iters=5000)
+    
+    prob.solve(solver=cp.GUROBI, verbose=False, **{"Threads": n_threads, "OutputFlag": 0} ) # max_iters=5000)
     # prob.solve()
     # prob.solve(adaptive_rho = False)  # solver=cp.SCS, max_iters=5000, verbose=False)
     # prob.solve(solver=cp.SCS, max_iters=10000, verbose=True)
@@ -196,6 +199,7 @@ def forward_batch_np(Q, p, G, h, A, b):
         ineqCon = slacks = slacksCon = None
     cons = [x for x in [eqCon, ineqCon, slacksCon] if x is not None]
     prob = cp.Problem(obj, cons)
+    # prob.solve(solver=cp.GUROBI, verbose=False, **{"Threads": n_threads, "OutputFlag": 0} )
     prob.solve(solver=cp.GUROBI, verbose=False) # max_iters=5000)
     # prob.solve()
     # prob.solve(adaptive_rho = False)  # solver=cp.SCS, max_iters=5000, verbose=False)

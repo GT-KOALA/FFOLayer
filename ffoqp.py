@@ -119,6 +119,8 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, lamb=100, check_Q_
             A, A_e = expandParam(A_, nBatch, 3)
             b, b_e = expandParam(b_, nBatch, 2)
 
+            Q, p, G, h, A, b = Q.to(zhats.device), p.to(zhats.device), G.to(zhats.device), h.to(zhats.device), A.to(zhats.device), b.to(zhats.device)
+
             # Running gradient descent for a few iterations
             _, nineq, nz = G.size()
             neq = A.size(1) if A.nelement() > 0 else 0
@@ -162,7 +164,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, lamb=100, check_Q_
                 # Deterministic solution by solving a new QP
                 temperature = 10
                 start_time = time.time()
-                active_constraints = torch.tanh(lams * temperature).unsqueeze(-1) 
+                active_constraints = torch.tanh(lams * temperature).unsqueeze(-1)
                 # active_constraints = (lams > 1e-3).unsqueeze(-1).float()
                 G_active = G * active_constraints
                 h_active = h.unsqueeze(-1) * active_constraints

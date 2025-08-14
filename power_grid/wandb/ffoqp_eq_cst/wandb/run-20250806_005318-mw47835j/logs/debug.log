@@ -19,3 +19,4 @@ config: {'task': 'ffoqp_eq_cst', 'save': None, 'nRuns': 1, 'seed': 0, '_wandb': 
 2025-08-06 00:53:19,574 INFO    MainThread:1940326 [wandb_run.py:_redirect():2375] Wrapping output streams.
 2025-08-06 00:53:19,574 INFO    MainThread:1940326 [wandb_run.py:_redirect():2398] Redirects installed.
 2025-08-06 00:53:19,581 INFO    MainThread:1940326 [wandb_init.py:init():1075] run started, returning control to user process
+2025-08-06 03:48:42,053 INFO    MsgRouterThr:1940326 [mailbox.py:close():129] [no run ID] Closing mailbox, abandoning 1 handles.

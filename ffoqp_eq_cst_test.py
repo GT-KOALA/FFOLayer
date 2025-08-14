@@ -1,5 +1,6 @@
 # import ffodo
-import ffoqp_eq_cst
+# import ffoqp_eq_cst
+import ffoqp_eq_cst_parallelize as ffoqp_eq_cst
 import torch
 import numpy as np
 import unittest

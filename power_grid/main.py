@@ -11,29 +11,27 @@ from datetime import datetime as dt
 import pytz
 from pandas.tseries.holiday import USFederalHolidayCalendar
 
-# try: import setGPU
-# except ImportError: pass
-
 import torch
 
 import model_classes, nets
 from constants import *
 import wandb
 
-# import sys
-# from IPython.core import ultratb
-# sys.excepthook = ultratb.FormattedTB(mode='Verbose',
-#      color_scheme='Linux', call_pdb=1)
+import warnings
+
+warnings.filterwarnings("ignore")
 
 def main():
     parser = argparse.ArgumentParser(
         description='Run electricity scheduling task net experiments.')
-    parser.add_argument('--task', type=str, default='cvxpylayer_lpgd', help='qpth, ffoqp, ffoqp_eq_cst, cvxpylayer, cvxpylayer_lpgd')
+    parser.add_argument('--task', type=str, default='ffoqp_eq_cst', help='qpth, ffoqp, ffoqp_eq_cst, cvxpylayer, cvxpylayer_lpgd')
     parser.add_argument('--save', type=str, 
         metavar='save-folder', help='prefix to add to save path')
     parser.add_argument('--nRuns', type=int, default=1,
         metavar='runs', help='number of runs')
+    parser.add_argument('--cuda_device', type=int, default=7, metavar='cuda_device', help='cuda device')
     parser.add_argument('--seed', type=int, default=0, metavar='seed', help='random seed')
+    parser.add_argument('--chunk_size', type=int, default=10, metavar='chunk_size', help='chunk size')
     args = parser.parse_args()
     
     setproctitle.setproctitle('power_sched')
@@ -44,6 +42,14 @@ def main():
     if not os.path.exists(f"wandb/{args.task}"):
         os.makedirs(f"wandb/{args.task}")
     wandb.init(project=f"bilevel_layer_ps_{args.task}", name=f"power_grid_{time_str}", config=vars(args), dir=f"wandb/{args.task}")
+
+    if torch.cuda.is_available():
+        DEVICE = f'cuda:{args.cuda_device}' if USE_GPU else 'cpu'
+        set_device(args.cuda_device)
+        print(f"Current device: {DEVICE}")
+    else:
+        DEVICE = 'cpu'
+        print(f"Current device: {DEVICE}")
 
     dataset_dir = os.path.dirname(os.path.abspath(__file__))
     X1, Y1 = load_data_with_features(os.path.join(dataset_dir, 'pjm_load_data_2008-11.txt'))
@@ -99,10 +105,9 @@ def main():
 
         # Run and eval task-minimizing net, building off rmse net results.
         model_task = model_classes.Net(X_train2[:,:-1], Y_train2, [200, 200])
-        solver = model_classes.SolveScheduling(params, task=args.task)
+        solver = model_classes.SolveScheduling(params, task=args.task, device=args.cuda_device, args=args)
         
-        if USE_GPU:
-            model_task = model_task.cuda()
+        model_task = model_task.to(DEVICE)
         # first -- pretrain using rmse loss
         model_task = nets.run_rmse_net(
             model_task, variables_task, X_train2, Y_train2)
