@@ -33,7 +33,7 @@ from qpthlocal.solvers.pdipm import batch as pdipm_b
 #         self.solver = solver if solver is not None else QPSolvers.CVXPY
 #         self.lamb = lamb
 
-def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=True, chunk_size=100):
+def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=False, chunk_size=None):
     """ -> kamo
     change lamb to alpha to prevent confusion
     """
@@ -129,7 +129,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
             ctx.nus = nus
             ctx.slacks = slacks
 
-            ctx.save_for_backward(zhats, lams, nus, Q_, p_, G_, h_, A_, b_)
+            ctx.save_for_backward(zhats, lams, nus, Q_, p_, G_, h_, A_, b_, Q_LU, S_LU, R)
             # print('value', vals)
             # print('solution', zhats)
             return zhats
@@ -137,7 +137,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
         @staticmethod
         def backward(ctx, grad_output):
             # Backward pass to compute gradients with respect to inputs
-            zhats, lams, nus, Q_, p_, G_, h_, A_, b_ = ctx.saved_tensors
+            zhats, lams, nus, Q_, p_, G_, h_, A_, b_, Q_LU, S_LU, R = ctx.saved_tensors
             lams = torch.clamp(lams, min=0)
 
             nBatch = extract_nBatch(Q_, p_, G_, h_, A_, b_)
@@ -174,7 +174,8 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                 G_active = torch.cat((G_active, A), dim=1)
                 h_active = torch.cat((h_active, b.unsqueeze(-1)), dim=1)
 
-            Q_LU, S_LU, R = pdipm_b.pre_factor_kkt(Q, G, A)
+            # no need for pre_factor_kkt
+            # Q_LU, S_LU, R = pdipm_b.pre_factor_kkt(Q, G, A)
             newzhat, newnu, newlam, _ = pdipm_b.forward(
                 Q, newp, None, None, G_active, h_active, Q_LU, S_LU, R,
                 eps, verbose, notImprovedLim, maxIter)

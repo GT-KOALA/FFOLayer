@@ -24,7 +24,7 @@ warnings.filterwarnings("ignore")
 def main():
     parser = argparse.ArgumentParser(
         description='Run electricity scheduling task net experiments.')
-    parser.add_argument('--task', type=str, default='ffoqp_eq_cst', help='qpth, ffoqp, ffoqp_eq_cst, cvxpylayer, cvxpylayer_lpgd')
+    parser.add_argument('--task', type=str, default='ffoqp_eq_cst_pdipm', help='qpth, ffoqp, ffoqp_eq_cst, ffoqp_eq_cst_parallelize, ffoqp_eq_cst_pdipm, cvxpylayer, cvxpylayer_lpgd')
     parser.add_argument('--save', type=str, 
         metavar='save-folder', help='prefix to add to save path')
     parser.add_argument('--nRuns', type=int, default=1,
