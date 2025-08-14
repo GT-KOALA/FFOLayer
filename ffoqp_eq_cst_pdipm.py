@@ -84,9 +84,9 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
             #             n_jobs=10,            
             #         )
 
-            Q_LU, S_LU, R = pdipm_b.pre_factor_kkt(Q, G, A)
+            ctx.Q_LU, ctx.S_LU, ctx.R = pdipm_b.pre_factor_kkt(Q, G, A)
             zhats, nus, lams, slacks = pdipm_b.forward(
-                Q, p, G, h, A, b, Q_LU, S_LU, R,
+                Q, p, G, h, A, b, ctx.Q_LU, ctx.S_LU, ctx.R,
                 eps, verbose, notImprovedLim, maxIter)
 
             # for i in range(0, nBatch, chunk_size):
@@ -129,7 +129,8 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
             ctx.nus = nus
             ctx.slacks = slacks
 
-            ctx.save_for_backward(zhats, lams, nus, Q_, p_, G_, h_, A_, b_, Q_LU, S_LU, R)
+            ctx.save_for_backward(zhats, lams, nus, Q_, p_, G_, h_, A_, b_)
+            
             # print('value', vals)
             # print('solution', zhats)
             return zhats
@@ -137,7 +138,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
         @staticmethod
         def backward(ctx, grad_output):
             # Backward pass to compute gradients with respect to inputs
-            zhats, lams, nus, Q_, p_, G_, h_, A_, b_, Q_LU, S_LU, R = ctx.saved_tensors
+            zhats, lams, nus, Q_, p_, G_, h_, A_, b_ = ctx.saved_tensors
             lams = torch.clamp(lams, min=0)
 
             nBatch = extract_nBatch(Q_, p_, G_, h_, A_, b_)
@@ -153,7 +154,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
             Q, p, G, h, A, b = Q.to(zhats.device), p.to(zhats.device), G.to(zhats.device), h.to(zhats.device), A.to(zhats.device), b.to(zhats.device)
 
             # Running gradient descent for a few iterations
-            _, nineq, nz = G.size()
+            nBatch, nineq, nz = G.size()
             neq = A.size(1) if A.nelement() > 0 else 0
 
             delta_directions = grad_output.unsqueeze(-1)
@@ -174,10 +175,13 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                 G_active = torch.cat((G_active, A), dim=1)
                 h_active = torch.cat((h_active, b.unsqueeze(-1)), dim=1)
 
-            # no need for pre_factor_kkt
-            # Q_LU, S_LU, R = pdipm_b.pre_factor_kkt(Q, G, A)
+            # TODO: working on pre_factor_kkt where nineq = 0
+            _A_dummy = Q.new_zeros(nBatch, 0, nz)
+            newQ_LU, newS_LU, newR = pdipm_b.pre_factor_kkt(Q, _A_dummy, G_active)
+            A = torch.tensor([], device=Q.device)
+            b = torch.tensor([], device=Q.device)
             newzhat, newnu, newlam, _ = pdipm_b.forward(
-                Q, newp, None, None, G_active, h_active, Q_LU, S_LU, R,
+                Q, newp, A, b, G_active, h_active, newQ_LU, newS_LU, newR,
                 eps, verbose, notImprovedLim, maxIter)
 
             # for i in range(0, nBatch, chunk_size):

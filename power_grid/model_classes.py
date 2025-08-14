@@ -192,7 +192,7 @@ class SolveSchedulingCvxpyLayer(nn.Module):
 
 class SolveSchedulingBL(nn.Module):
     """ Solve a single SQP iteration of the scheduling problem"""
-    def __init__(self, params, args, device=DEVICE, chunk_size=10):
+    def __init__(self, params, task, device=DEVICE, chunk_size=10):
         super(SolveSchedulingBL, self).__init__()
         self.c_ramp = params["c_ramp"]
         self.n = params["n"]
@@ -202,7 +202,7 @@ class SolveSchedulingBL(nn.Module):
         self.e = torch.DoubleTensor()
         if USE_GPU:
             self.e = self.e.cuda()
-        self.task = args.task
+        self.task = task
         self.chunk_size = chunk_size
         
     def forward(self, z0, mu, dg, d2g):
@@ -268,9 +268,9 @@ class SolveScheduling(nn.Module):
             elif self.task == "cvxpylayer" or self.task == "cvxpylayer_lpgd":
                 z0_new = SolveSchedulingCvxpyLayer(self.params, lpgd=self.lpgd, device=self.device)(z0, mu0, dg, d2g)
             elif self.task == "ffoqp":
-                z0_new = SolveSchedulingBL(self.params, args=self.args, device=self.device, chunk_size=self.args.chunk_size)(z0, mu0, dg, d2g)
+                z0_new = SolveSchedulingBL(self.params, task=self.task, device=self.device, chunk_size=self.args.chunk_size)(z0, mu0, dg, d2g)
             elif "ffoqp_eq_cst" in self.task:
-                z0_new = SolveSchedulingBL(self.params, args=self.args, device=self.device, chunk_size=self.args.chunk_size)(z0, mu0, dg, d2g)
+                z0_new = SolveSchedulingBL(self.params, task=self.task, device=self.device, chunk_size=self.args.chunk_size)(z0, mu0, dg, d2g)
             else:
                 raise ValueError(f"Invalid task: {self.task}")
             solution_diff = (z0-z0_new).norm().item()
@@ -291,8 +291,8 @@ class SolveScheduling(nn.Module):
         elif self.task == "cvxpylayer" or self.task == "cvxpylayer_lpgd":
             return SolveSchedulingCvxpyLayer(self.params, lpgd=self.lpgd)(z0, mu, dg, d2g)
         elif self.task == "ffoqp":
-            return SolveSchedulingBL(self.params, args=self.args, device=self.device, chunk_size=self.args.chunk_size)(z0, mu, dg, d2g)
+            return SolveSchedulingBL(self.params, task=self.task, device=self.device, chunk_size=self.args.chunk_size)(z0, mu, dg, d2g)
         elif "ffoqp_eq_cst" in self.task:
-            return SolveSchedulingBL(self.params, args=self.args, device=self.device, chunk_size=self.args.chunk_size)(z0, mu, dg, d2g)
+            return SolveSchedulingBL(self.params, task=self.task, device=self.device, chunk_size=self.args.chunk_size)(z0, mu, dg, d2g)
         else:
             raise ValueError(f"Invalid task: {self.task}")
