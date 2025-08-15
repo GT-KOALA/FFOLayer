@@ -7,6 +7,9 @@ import unittest
 # from qpthlocal.qp import QPSolvers
 from cvxpylayers.torch import CvxpyLayer
 import cvxpy as cp
+from qpth.qp import QPFunction
+import qpth
+import time
 
 # SEED = 25
 
@@ -40,7 +43,8 @@ class TestFFOQP(unittest.TestCase):
     def test_ffoqp(self):
         # torch.manual_seed(SEED)
         # Create a sample optimization problem
-        n = 100
+        
+        n = 500
         n_eq_constraints   = 0
         n_ineq_constraints = 50
         Q = torch.eye(n)
@@ -59,13 +63,18 @@ class TestFFOQP(unittest.TestCase):
         ffoqp_instance = ffoqp.ffoqp(lamb=100)
 
         # Forward pass through the FFOQP instance
-        print('solving qp...')
+        start_time = time.time()
         z = ffoqp_instance(Q, q, G, h, A, b)
         # print('solution', z)
+        end_time = time.time()
+        print(f'ffoqp forward time: {end_time - start_time}')
 
         print('backpropagating qp...')
+        start_time = time.time()
         loss = torch.sum(z)
         loss.backward(retain_graph=True)
+        end_time = time.time()
+        print(f'ffoqp backward time: {end_time - start_time}')
         ffoqp_grad = q.grad.clone().detach()
         optimizer.zero_grad()
 
@@ -92,18 +101,34 @@ class TestFFOQP(unittest.TestCase):
 
         # Cvxpylayer
         layer = CvxpyLayer(problem, parameters=[Q_cp, q_cp, G_cp, h_cp], variables=[z_cp])
+        start_time = time.time()
         sol = layer(Q, q, G, h)
         z_sol = sol[0]
+        end_time = time.time()
+        print(f'cvxpylayer forward time: {end_time - start_time}')
 
         loss = torch.sum(z_sol)
+        start_time = time.time()
         loss.backward()
+        end_time = time.time()
+        print(f'cvxpylayer backward time: {end_time - start_time}')
         
         cvxpylayer_grad = q.grad.clone().detach()
         optimizer.zero_grad()
-        print('ffoqp_grad', ffoqp_grad)
-        print('cvxpylayer_grad', cvxpylayer_grad)
+        # print('ffoqp_grad', ffoqp_grad)
+        # print('cvxpylayer_grad', cvxpylayer_grad)
         print('gradient difference', torch.norm(ffoqp_grad - cvxpylayer_grad, p=1))
         print('cosine similarity', torch.nn.functional.cosine_similarity(ffoqp_grad, cvxpylayer_grad, dim=0))
+
+        start_time = time.time()
+        out = QPFunction(verbose=False, solver=qpth.qp.QPSolvers.PDIPM_BATCHED)(Q, q, G, h, A, b)
+        end_time = time.time()
+        print(f'qpth forward time: {end_time - start_time}')
+        start_time = time.time()
+        loss = torch.sum(out)
+        loss.backward()
+        end_time = time.time()
+        print(f'qpth backward time: {end_time - start_time}')
 
     def test_ffoqp_equality(self):
         # torch.manual_seed(SEED)
