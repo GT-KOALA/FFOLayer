@@ -33,7 +33,8 @@ from typing import cast, List, Optional, Union
 #         self.solver = solver if solver is not None else QPSolvers.CVXPY
 #         self.lamb = lamb
 
-def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, lamb=100, check_Q_spd=True):
+def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, lamb=100, check_Q_spd=True,
+          solver='GUROBI', solver_opts={"verbose": False}):
 
     class QPFunctionFn(torch.autograd.Function):
         @staticmethod
@@ -76,7 +77,8 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, lamb=100, check_Q_
                 Ai, bi = (A[i], b[i]) if neq > 0 else (None, None)
                 vals[i], zhati, nui, lami, si = forward_single_np(
                     *[x.cpu().numpy() if x is not None else None
-                    for x in (Q[i], p[i], G[i], h[i], Ai, bi)])
+                    for x in (Q[i], p[i], G[i], h[i], Ai, bi)],
+                    solver=solver, solver_opts=solver_opts)
                 # if zhati[0] is None:
                 #     import IPython, sys; IPython.embed(); sys.exit(-1)
                 zhats[i] = torch.Tensor(zhati)
@@ -208,7 +210,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, lamb=100, check_Q_
                 if neq > 0:
                     eq_violations = A_torch @ newzhat - b_torch.unsqueeze(-1)
                     eq_penalties = nus.unsqueeze(1) @ eq_violations # + 0.5 * lamb * torch.sum(eq_violations ** 2, dim=(-1,-2))
-                    print(eq_violations)
+                    # print(eq_violations)
                 else:
                     eq_penalties = 0
                 # print('obj, vio, active_constraints, lamb, ineq_penality shape:', objectives.shape, violations.shape, active_constraints.shape, lamb, ineq_penalties.shape)

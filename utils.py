@@ -100,7 +100,9 @@ def expandParam(X, nBatch, nDim):
 #             
 #     return sol, info
 
-def forward_single_np(Q, p, G, h, A, b):
+def forward_single_np(Q, p, G, h, A, b,
+                      solver='GUROBI',
+                      solver_opts={"verbose": False}):
     nz, neq, nineq = p.shape[0], A.shape[0] if A is not None else 0, G.shape[0]
 
     z_ = cp.Variable(nz)
@@ -115,7 +117,7 @@ def forward_single_np(Q, p, G, h, A, b):
         ineqCon = slacks = slacksCon = None
     cons = [x for x in [eqCon, ineqCon, slacksCon] if x is not None]
     prob = cp.Problem(obj, cons)
-    prob.solve(solver=cp.GUROBI, verbose=False) # max_iters=5000)
+    prob.solve(solver=solver, **solver_opts) # max_iters=5000)
     # prob.solve()
     # prob.solve(adaptive_rho = False)  # solver=cp.SCS, max_iters=5000, verbose=False)
     # prob.solve(solver=cp.SCS, max_iters=10000, verbose=True)
@@ -167,7 +169,9 @@ def forward_single_np_eq_cst(Q, p, G, h, A, b):
     return prob.value, zhat, nu, lam, slacks
 
 
-def forward_batch_np(Q, p, G, h, A, b):
+def forward_batch_np(Q, p, G, h, A, b,
+                     solver='GUROBI',
+                     solver_opts={"verbose": False}):
     """ -> kamo
     Q : (nb, nz, nz)
     p : (nb, nz)
@@ -200,7 +204,7 @@ def forward_batch_np(Q, p, G, h, A, b):
     cons = [x for x in [eqCon, ineqCon, slacksCon] if x is not None]
     prob = cp.Problem(obj, cons)
     # prob.solve(solver=cp.GUROBI, verbose=False, **{"Threads": n_threads, "OutputFlag": 0} )
-    prob.solve(solver=cp.GUROBI, verbose=False) # max_iters=5000)
+    prob.solve(solver=solver, **solver_opts) # max_iters=5000)
     # prob.solve()
     # prob.solve(adaptive_rho = False)  # solver=cp.SCS, max_iters=5000, verbose=False)
     # prob.solve(solver=cp.SCS, max_iters=10000, verbose=True)
