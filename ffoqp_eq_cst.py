@@ -35,7 +35,7 @@ from typing import cast, List, Optional, Union
 
 def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=True, chunk_size=100,
           solver='GUROBI', solver_opts={"verbose": False},
-          exact_bwd_sol=False):
+          exact_bwd_sol=False, dual_cutoff=1e-4):
     """ -> kamo
     change lamb to alpha to prevent confusion
     """
@@ -150,18 +150,17 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
 
             # this is a hack by kamo
             start_time = time.time()
-            active_constraints = (lams > 1e-3).unsqueeze(-1).float()
+            active_constraints = (lams > dual_cutoff).unsqueeze(-1).float()
             G_active = G * active_constraints
-            h_active = h.unsqueeze(-1) * active_constraints
-            newp = p.unsqueeze(-1) + delta_directions / alpha
+            #h_active = h.unsqueeze(-1) * active_constraints
+            #newp = p.unsqueeze(-1) + delta_directions / alpha
 
-            newzhat = torch.Tensor(nBatch, nz, 1).type_as(Q)
-            newlam = torch.Tensor(nBatch, nineq).type_as(Q)
-            newnu = torch.Tensor(nBatch, neq).type_as(Q)
+            dzhat = torch.Tensor(nBatch, nz, 1).type_as(Q)
+            dnu = torch.Tensor(nBatch, nineq + neq).type_as(Q)
 
             if neq > 0:
                 G_active = torch.cat((G_active, A), dim=1)
-                h_active = torch.cat((h_active, b.unsqueeze(-1)), dim=1)
+                #h_active = torch.cat((h_active, b.unsqueeze(-1)), dim=1)
 
             if exact_bwd_sol:
                 Lq, Qq = torch.linalg.eigh(Q)
@@ -171,9 +170,8 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                 pine = torch.linalg.lstsq(Aq, Aq @ aapl).solution
                 dlam = torch.linalg.lstsq(Aq.transpose(-1, -2), pine, driver='gelsd').solution
                 dz = rsqrtQ @ (aapl - pine)
-                newzhat[:] = zhats + dz
-                newlam[:] = lams + dlam[:, :nineq, 0]
-                newnu[:] = nus + dlam[:, nineq:, 0]
+                dzhat[:] = dz
+                dnu[:] = dlam[..., 0]
             else:
                 for i in range(0, nBatch, chunk_size):
                     if chunk_size > 1:
@@ -181,16 +179,15 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                         i = slice(i, i + size)
                         _, zhati, nui, _, _ = forward_batch_np(
                             *[x.cpu().numpy() if x is not None else None
-                              for x in (Q[i], newp[i, :, 0], None, None, G_active[i], h_active[i, :, 0])],
+                              for x in (Q[i], grad_output[i], None, None, G_active[i], torch.zeros([size]))],
                             solver=solver, solver_opts=solver_opts)
                     else:
                         _, zhati, nui, _, _ = forward_single_np_eq_cst(
                             *[x.cpu().numpy() if x is not None else None
-                              for x in (Q[i], newp[i, :, 0], None, None, G_active[i], h_active[i, :, 0])])
+                              for x in (Q[i], grad_output[i], None, None, G_active[i], torch.zeros([size]))])
 
-                    newzhat[i, :, 0] = torch.Tensor(zhati)
-                    newlam[i] = torch.Tensor(nui[..., :nineq])
-                    newnu[i] = torch.Tensor(nui[..., nineq:])
+                    dzhat[i, :, 0] = torch.Tensor(zhati)
+                    dnu[i] = torch.Tensor(nui)
 
             start_time = time.time()
             with torch.enable_grad():
@@ -201,20 +198,19 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                 A_torch = A.detach().clone().requires_grad_(True)
                 b_torch = b.detach().clone().requires_grad_(True)
                
-                objectives = (0.5 * newzhat.transpose(-1,-2) @ Q_torch @ newzhat + p_torch.unsqueeze(1) @ newzhat).squeeze(-1,-2)
+                objectives = (dzhat.transpose(-1,-2) @ Q_torch @ zhats + p_torch.unsqueeze(1) @ dzhat).squeeze(-1,-2)
                 violations = G_torch @ zhats - h_torch.unsqueeze(-1)
 
-                ineq_penalties = (newlam - lams).unsqueeze(1) @ (violations * active_constraints)
+                ineq_penalties = dnu[:, :nineq].unsqueeze(1) @ (violations * active_constraints)
 
-                optimal_objectives = (0.5 * zhats.transpose(-1,-2) @ Q_torch @ zhats + p_torch.unsqueeze(1) @ zhats).squeeze(-1,-2)
                 if neq > 0:
                     eq_violations = A_torch @ zhats - b_torch.unsqueeze(-1)
-                    eq_penalties = (newnu - nus).unsqueeze(1) @ eq_violations
+                    eq_penalties = dnu[:, nineq:].unsqueeze(1) @ eq_violations
                 else:
                     eq_penalties = 0
 
-                lagrangians = objectives - optimal_objectives + ineq_penalties + eq_penalties
-                loss = torch.sum(lagrangians) * alpha
+                lagrangians = objectives + ineq_penalties + eq_penalties
+                loss = torch.sum(lagrangians)
                 loss.backward()
 
                 Q_grad = Q_torch.grad.detach()
