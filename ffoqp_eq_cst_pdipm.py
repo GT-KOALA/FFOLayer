@@ -17,6 +17,7 @@ from utils import extract_nBatch, expandParam
 from typing import cast, List, Optional, Union
 
 from qpthlocal.solvers.pdipm import batch as pdipm_b
+from qpthlocal.solvers.pdipm.batch import KKTSolvers
 # from cvxpylayers.torch import CvxpyLayer
 
 # class QPSolvers(Enum):
@@ -32,6 +33,33 @@ from qpthlocal.solvers.pdipm import batch as pdipm_b
 #         self.maxiter = maxiter
 #         self.solver = solver if solver is not None else QPSolvers.CVXPY
 #         self.lamb = lamb
+
+def solve_kkt_batched(Q, p, A, b, sigma=1e-8, ridge_Q=1e-12, sign=-1.0):
+    B, n, _ = Q.shape
+    m = A.size(1) if (A is not None and A.numel() > 0) else 0
+    if p.dim() == 2: p = p.unsqueeze(-1)
+    if b.dim() == 2: b = b.unsqueeze(-1)
+
+    if m == 0:
+        K11 = Q + ridge_Q * torch.eye(n, device=Q.device, dtype=Q.dtype)
+        z = -torch.linalg.solve(K11, p).squeeze(-1)
+        nu = Q.new_zeros(B, 0)
+        return z, nu
+
+    K = Q.new_zeros(B, n + m, n + m)
+    K[:, :n, :n] = Q + ridge_Q * torch.eye(n, device=Q.device, dtype=Q.dtype)
+    K[:, :n, n:] = A.transpose(1, 2)
+    K[:, n:, :n] = A
+    K[:, n:, n:] = sign * sigma * torch.eye(m, device=Q.device, dtype=Q.dtype)
+
+    rhs = Q.new_empty(B, n + m, 1)
+    rhs[:, :n, 0:1] = -p
+    rhs[:, n:, 0:1] = b
+
+    sol = torch.linalg.solve(K, rhs)
+    z  = sol[:, :n].squeeze(-1)
+    nu = sol[:, n:].squeeze(-1)
+    return z, nu
 
 def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=False, chunk_size=None):
     """ -> kamo
@@ -75,19 +103,15 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                 if ctx.neq > 0 else torch.Tensor()
             slacks = torch.Tensor(nBatch, ctx.nineq).type_as(Q)
 
-            # if neq == 0:
-            #     A, b = None, None
-
-            # _, zhats, nus, lams, slacks = solve_in_chunks_parallel(
-            #             Q, p, G, h, A, b,
-            #             chunk_size=chunk_size if chunk_size != -1 else nBatch,
-            #             n_jobs=10,            
-            #         )
-
-            ctx.Q_LU, ctx.S_LU, ctx.R = pdipm_b.pre_factor_kkt(Q, G, A)
-            zhats, nus, lams, slacks = pdipm_b.forward(
-                Q, p, G, h, A, b, ctx.Q_LU, ctx.S_LU, ctx.R,
-                eps, verbose, notImprovedLim, maxIter)
+            if nineq > 0:
+                ctx.Q_LU, ctx.S_LU, ctx.R = pdipm_b.pre_factor_kkt(Q, G, A)
+                zhats, nus, lams, slacks = pdipm_b.forward(
+                    Q, p, G, h, A, b, ctx.Q_LU, ctx.S_LU, ctx.R,
+                    eps, verbose, notImprovedLim, maxIter)
+            else:
+                zhats, nus = solve_kkt_batched(Q, p, A, b)
+                lams  = Q.new_zeros(nBatch, 0)
+                slacks = Q.new_zeros(nBatch, 0)
 
             # for i in range(0, nBatch, chunk_size):
             #     if chunk_size > 1:
@@ -175,14 +199,10 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                 G_active = torch.cat((G_active, A), dim=1)
                 h_active = torch.cat((h_active, b.unsqueeze(-1)), dim=1)
 
-            # TODO: working on pre_factor_kkt where nineq = 0
-            _A_dummy = Q.new_zeros(nBatch, 0, nz)
-            newQ_LU, newS_LU, newR = pdipm_b.pre_factor_kkt(Q, _A_dummy, G_active)
-            A = torch.tensor([], device=Q.device)
-            b = torch.tensor([], device=Q.device)
-            newzhat, newnu, newlam, _ = pdipm_b.forward(
-                Q, newp, A, b, G_active, h_active, newQ_LU, newS_LU, newR,
-                eps, verbose, notImprovedLim, maxIter)
+            newzhat, new_nu_both = solve_kkt_batched(Q, newp.squeeze(-1), G_active, h_active.squeeze(-1))
+            newzhat = newzhat.unsqueeze(-1)
+            newlam = new_nu_both[..., :nineq]
+            newnu = new_nu_both[..., nineq:]
 
             # for i in range(0, nBatch, chunk_size):
             #     if chunk_size > 1:

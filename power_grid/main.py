@@ -42,8 +42,9 @@ def main():
     if not os.path.exists(f"wandb/{args.task}"):
         os.makedirs(f"wandb/{args.task}")
     wandb.init(project=f"bilevel_layer_ps_{args.task}", name=f"power_grid_{time_str}", config=vars(args), dir=f"wandb/{args.task}")
-
-    if torch.cuda.is_available():
+    if args.cuda_device == -1:
+        DEVICE = 'cpu'
+    elif torch.cuda.is_available():
         DEVICE = f'cuda:{args.cuda_device}' if USE_GPU else 'cpu'
         set_device(args.cuda_device)
         print(f"Current device: {DEVICE}")
@@ -104,7 +105,7 @@ def main():
                 'X_test_': X_test_, 'Y_test_': Y_test_}
 
         # Run and eval task-minimizing net, building off rmse net results.
-        model_task = model_classes.Net(X_train2[:,:-1], Y_train2, [200, 200])
+        model_task = model_classes.Net(X_train2[:,:-1], Y_train2, [200, 200]).to(DEVICE)
         solver = model_classes.SolveScheduling(params, task=args.task, device=args.cuda_device, args=args)
         
         model_task = model_task.to(DEVICE)

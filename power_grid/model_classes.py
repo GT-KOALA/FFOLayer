@@ -232,6 +232,10 @@ class SolveScheduling(nn.Module):
         programming. """
     def __init__(self, params, task, device=DEVICE, args=None):
         super(SolveScheduling, self).__init__()
+        if device == -1:
+            self.device = 'cpu'
+        else:
+            self.device = device
         self.params = params
         self.c_ramp = params["c_ramp"]
         self.n = params["n"]
@@ -242,13 +246,13 @@ class SolveScheduling(nn.Module):
             self.lpgd = False
         
         D = np.eye(self.n - 1, self.n) - np.eye(self.n - 1, self.n, 1)
-        self.G = torch.tensor(np.vstack([D,-D]), dtype=torch.double, device=device)
-        self.h = (self.c_ramp * torch.ones((self.n - 1) * 2, device=device)).double()
+        self.G = torch.tensor(np.vstack([D,-D]), dtype=torch.double, device=self.device)
+        self.h = (self.c_ramp * torch.ones((self.n - 1) * 2, device=self.device)).double()
         self.e = torch.DoubleTensor()
-        self.device = device
-        self.args = args
-        if USE_GPU:
+        if USE_GPU and self.device != -1:
             self.e = self.e.cuda()
+        self.args = args
+        
         
     def forward(self, mu, sig):
         nBatch, n = mu.size()
@@ -264,7 +268,7 @@ class SolveScheduling(nn.Module):
             d2g = GQuadraticApprox(self.params["gamma_under"], 
                 self.params["gamma_over"])(z0, mu0, sig0)
             if self.task == "qpth":
-                z0_new = SolveSchedulingQP(self.params)(z0, mu0, dg, d2g)
+                z0_new = SolveSchedulingQP(self.params, device=self.device)(z0, mu0, dg, d2g)
             elif self.task == "cvxpylayer" or self.task == "cvxpylayer_lpgd":
                 z0_new = SolveSchedulingCvxpyLayer(self.params, lpgd=self.lpgd, device=self.device)(z0, mu0, dg, d2g)
             elif self.task == "ffoqp":
