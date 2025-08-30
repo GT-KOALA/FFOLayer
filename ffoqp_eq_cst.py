@@ -35,7 +35,7 @@ from typing import cast, List, Optional, Union
 
 def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=True, chunk_size=100,
           solver='GUROBI', solver_opts={"verbose": False},
-          exact_bwd_sol=False, dual_cutoff=1e-4):
+          exact_bwd_sol=True, dual_cutoff=1e-4):
     """ -> kamo
     change lamb to alpha to prevent confusion
     """
@@ -179,12 +179,12 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                         i = slice(i, i + size)
                         _, zhati, nui, _, _ = forward_batch_np(
                             *[x.cpu().numpy() if x is not None else None
-                              for x in (Q[i], grad_output[i], None, None, G_active[i], torch.zeros([size]))],
+                              for x in (Q[i], grad_output[i], None, None, G_active[i], torch.zeros(G_active[i].shape[0], G_active[i].shape[1]))],
                             solver=solver, solver_opts=solver_opts)
                     else:
                         _, zhati, nui, _, _ = forward_single_np_eq_cst(
                             *[x.cpu().numpy() if x is not None else None
-                              for x in (Q[i], grad_output[i], None, None, G_active[i], torch.zeros([size]))])
+                              for x in (Q[i], grad_output[i], None, None, G_active[i], torch.zeros(G_active[i].shape[0], G_active[i].shape[1]))])
 
                     dzhat[i, :, 0] = torch.Tensor(zhati)
                     dnu[i] = torch.Tensor(nui)

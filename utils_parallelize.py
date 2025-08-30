@@ -118,13 +118,17 @@ def solve_in_chunks_parallel(Q, p, G, h, A, b, chunk_size=10, n_jobs=None,
     val_total = float(np.sum(vals))
     zhat_all  = np.vstack(zhats)
 
-    zhat_all = torch.tensor(zhat_all, device=device)
+    zhat_all = torch.tensor(zhat_all, device=device, dtype=Q.dtype)
 
     def _stack_or_none(parts):
         return None if parts[0] is None else np.vstack(parts)
 
     nu_all = _stack_or_none(nus)
+    nu_all = torch.tensor(nu_all, device=device, dtype=Q.dtype) if nu_all is not None else None
     lam_all = _stack_or_none(lams)
+    lam_all = torch.tensor(lam_all, device=device, dtype=Q.dtype) if lam_all is not None else None
     slack_all = _stack_or_none(slacks)
+    slack_all = torch.tensor(slack_all, device=device, dtype=Q.dtype) if slack_all is not None else None
+    
 
     return val_total, zhat_all, nu_all, lam_all, slack_all

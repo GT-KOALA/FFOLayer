@@ -8,7 +8,8 @@ from torch.autograd import grad
 
 from cvxpylayers.torch import CvxpyLayer
 import diffcp
-from ffocp import BLOLayer
+# from ffocp import BLOLayer
+from ffocp_eq import BLOLayer
 
 torch.set_default_dtype(torch.double)
 
@@ -32,7 +33,7 @@ class TestCvxpyLayer(unittest.TestCase):
         batch_size = 4
         inequality_functions = [-x] # The function form of the inequality constraint
         constraints = [inequality_function <= 0 for inequality_function in inequality_functions]
-        objective = 0.5 * cp.pnorm(A @ x - b, p=1)
+        objective = 0.5 * cp.pnorm(A @ x - b, p=2)**2
         problem = cp.Problem(cp.Minimize(objective), constraints)
         assert problem.is_dpp()
 
@@ -47,7 +48,7 @@ class TestCvxpyLayer(unittest.TestCase):
         # solution.sum().backward()
 
         # Bilevel optimization layer
-        blolayer = BLOLayer(objective=objective, equality_functions=[], inequality_functions=inequality_functions, parameters=[A, b], variables=[x], lamb=100)
+        blolayer = BLOLayer(objective=objective, equality_functions=[], inequality_functions=inequality_functions, parameters=[A, b], variables=[x], alpha=100)
 
         # solve the problem
         blo_solution, = blolayer(A_tch, b_tch)

@@ -60,7 +60,7 @@ def solve_kkt_batched(Q, p, A, b, sigma=1e-8, ridge_Q=1e-12, sign=-1.0):
     nu = sol[:, n:].squeeze(-1)
     return z, nu
 
-def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, exact_bwd_sol=True, dual_cutoff=1e-4, check_Q_spd=False, chunk_size=None):
+def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=False, chunk_size=None):
     """ -> kamo
     change lamb to alpha to prevent confusion
     """
@@ -95,6 +95,9 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, exact_b
                     Q, p, G, h, A, b, ctx.Q_LU, ctx.S_LU, ctx.R,
                     eps, verbose, notImprovedLim, maxIter)
             else:
+                # zhats, nus = solve_kkt_batched(Q, p, A, b)
+                # lams  = Q.new_zeros(nBatch, 0)
+                # slacks = Q.new_zeros(nBatch, 0)
                 raise NotImplementedError("Not implemented")
             
             ctx.lams = lams
@@ -102,6 +105,8 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, exact_b
             ctx.slacks = slacks
 
             ctx.save_for_backward(zhats, lams, nus, Q_, p_, G_, h_, A_, b_)
+            # print('value', vals)
+            # print('solution', zhats)
             return zhats
 
         @staticmethod
@@ -123,7 +128,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, exact_b
             Q, p, G, h, A, b = Q.to(zhats.device), p.to(zhats.device), G.to(zhats.device), h.to(zhats.device), A.to(zhats.device), b.to(zhats.device)
 
             # Running gradient descent for a few iterations
-            _, nineq, nz = G.size()
+            nBatch, nineq, nz = G.size()
             neq = A.size(1) if A.nelement() > 0 else 0
 
             delta_directions = grad_output.unsqueeze(-1)
@@ -131,30 +136,29 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, exact_b
 
             # this is a hack by kamo
             start_time = time.time()
-            active_constraints = (lams > dual_cutoff).unsqueeze(-1).float()
+            active_constraints = (lams > 1e-3).unsqueeze(-1).float()
             G_active = G * active_constraints
-            #h_active = h.unsqueeze(-1) * active_constraints
-            #newp = p.unsqueeze(-1) + delta_directions / alpha
-
-            dzhat = torch.Tensor(nBatch, nz, 1).type_as(Q)
-            dnu = torch.Tensor(nBatch, nineq + neq).type_as(Q)
+            h_active = h.unsqueeze(-1) * active_constraints
+            newp = p.unsqueeze(-1) + delta_directions / alpha
 
             if neq > 0:
                 G_active = torch.cat((G_active, A), dim=1)
-                #h_active = torch.cat((h_active, b.unsqueeze(-1)), dim=1)
+                h_active = torch.cat((h_active, b.unsqueeze(-1)), dim=1)
 
-            if exact_bwd_sol:
-                Lq, Qq = torch.linalg.eigh(Q)
-                rsqrtQ = Qq @ torch.diag_embed(torch.rsqrt(Lq)) @ Qq.transpose(-1, -2)
-                aapl = rsqrtQ @ -delta_directions
-                Aq = G_active @ rsqrtQ
-                pine = torch.linalg.lstsq(Aq, Aq @ aapl).solution
-                dlam = torch.linalg.lstsq(Aq.transpose(-1, -2), pine, driver='gelsd').solution
-                dz = rsqrtQ @ (aapl - pine)
-                dzhat[:] = dz
-                dnu[:] = dlam[..., 0]
-            else:
-                raise NotImplementedError("Exact backward solution is not implemented")
+            newzhat, new_nu_both = solve_kkt_batched(Q, newp.squeeze(-1), G_active, h_active.squeeze(-1))
+            # Lq, Qq = torch.linalg.eigh(Q)
+            # rsqrtQ = Qq @ torch.diag_embed(torch.rsqrt(Lq)) @ Qq.transpose(-1, -2)
+            # aapl = rsqrtQ @ -delta_directions
+            # Aq = G_active @ rsqrtQ
+            # pine = torch.linalg.lstsq(Aq, Aq @ aapl).solution
+            # dlam = torch.linalg.lstsq(Aq.transpose(-1, -2), pine, driver='gelsd').solution
+            # dz = rsqrtQ @ (aapl - pine)
+            # newzhat = dz
+            # new_nu_both = dlam[..., 0]
+
+            newzhat = newzhat.unsqueeze(-1)
+            newlam = new_nu_both[..., :nineq]
+            newnu = new_nu_both[..., nineq:]
 
             start_time = time.time()
             with torch.enable_grad():
@@ -165,19 +169,20 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, exact_b
                 A_torch = A.detach().clone().requires_grad_(True)
                 b_torch = b.detach().clone().requires_grad_(True)
                
-                objectives = (dzhat.transpose(-1,-2) @ Q_torch @ zhats + p_torch.unsqueeze(1) @ dzhat).squeeze(-1,-2)
+                objectives = (0.5 * newzhat.transpose(-1,-2) @ Q_torch @ newzhat + p_torch.unsqueeze(1) @ newzhat).squeeze(-1,-2)
                 violations = G_torch @ zhats - h_torch.unsqueeze(-1)
 
-                ineq_penalties = dnu[:, :nineq].unsqueeze(1) @ (violations * active_constraints)
+                ineq_penalties = (newlam - lams).unsqueeze(1) @ (violations * active_constraints)
 
+                optimal_objectives = (0.5 * zhats.transpose(-1,-2) @ Q_torch @ zhats + p_torch.unsqueeze(1) @ zhats).squeeze(-1,-2)
                 if neq > 0:
                     eq_violations = A_torch @ zhats - b_torch.unsqueeze(-1)
-                    eq_penalties = dnu[:, nineq:].unsqueeze(1) @ eq_violations
+                    eq_penalties = (newnu - nus).unsqueeze(1) @ eq_violations
                 else:
                     eq_penalties = 0
 
-                lagrangians = objectives + ineq_penalties + eq_penalties
-                loss = torch.sum(lagrangians)
+                lagrangians = objectives - optimal_objectives + ineq_penalties + eq_penalties
+                loss = torch.sum(lagrangians) * alpha
                 loss.backward()
 
                 Q_grad = Q_torch.grad.detach()

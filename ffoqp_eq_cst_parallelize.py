@@ -82,7 +82,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
             _, zhats, nus, lams, slacks = solve_in_chunks_parallel(
                         Q, p, G, h, A, b,
                         chunk_size=chunk_size if chunk_size != -1 else nBatch,
-                        n_jobs=10,            
+                        n_jobs=16,            
                     )
 
             # for i in range(0, nBatch, chunk_size):
@@ -149,7 +149,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
             Q, p, G, h, A, b = Q.to(zhats.device), p.to(zhats.device), G.to(zhats.device), h.to(zhats.device), A.to(zhats.device), b.to(zhats.device)
 
             # Running gradient descent for a few iterations
-            _, nineq, nz = G.size()
+            nBatch, nineq, nz = G.size()
             neq = A.size(1) if A.nelement() > 0 else 0
 
             delta_directions = grad_output.unsqueeze(-1)
@@ -162,19 +162,22 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
             h_active = h.unsqueeze(-1) * active_constraints
             newp = p.unsqueeze(-1) + delta_directions / alpha
 
-            newzhat = torch.Tensor(nBatch, nz, 1).type_as(Q)
-            newlam = torch.Tensor(nBatch, nineq).type_as(Q)
-            newnu = torch.Tensor(nBatch, neq).type_as(Q)
+            # newzhat = torch.Tensor(nBatch, nz, 1).type_as(Q)
+            # newlam = torch.Tensor(nBatch, nineq).type_as(Q)
+            # newnu = torch.Tensor(nBatch, neq).type_as(Q)
 
             if neq > 0:
                 G_active = torch.cat((G_active, A), dim=1)
                 h_active = torch.cat((h_active, b.unsqueeze(-1)), dim=1)
 
-            _, newzhat, newnu, newlam, _ = solve_in_chunks_parallel(
+            _, newzhat, new_nu_both, _, _ = solve_in_chunks_parallel(
                         Q, newp, None, None, G_active, h_active,
                         chunk_size=chunk_size if chunk_size != -1 else nBatch,
-                        n_jobs=10,            
+                        n_jobs=16,            
                     )
+            newzhat = newzhat.unsqueeze(-1)
+            newlam = new_nu_both[..., :nineq]
+            newnu = new_nu_both[..., nineq:]
 
             # for i in range(0, nBatch, chunk_size):
             #     if chunk_size > 1:
