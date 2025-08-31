@@ -7,3 +7,4 @@ output/*
 **/results/*
 **/wandb/*
 **/.pytest_cache/*
+**/results_*/*
