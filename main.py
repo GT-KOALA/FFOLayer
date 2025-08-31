@@ -29,6 +29,7 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=0, help='random seed')
     parser.add_argument('--eps', type=float, default=0.1, help='lambda for ffoqp')
     parser.add_argument('--lr', type=float, default=0.00001, help='learning rate')
+    parser.add_argument('--batch_size', type=int, default=64, help='batch size')
     parser.add_argument('--ydim', type=int, default=32, help='dimension of y')
     
     args = parser.parse_args()
@@ -48,7 +49,7 @@ if __name__ == '__main__':
     ydim  = args.ydim
     n = ydim
     num_samples = 2048
-    batch_size = 32
+    batch_size = args.batch_size
 
     train_loader, test_loader = genData(input_dim, ydim, num_samples, batch_size)
 
@@ -99,14 +100,14 @@ if __name__ == '__main__':
         elif method == 'ffoqp_eq_cst_pdipm':
             ffoqp_layer = ffoqp_eq_cst_pdipm.ffoqp(alpha=100)
         elif method == 'ffoqp_eq_cst':
-            ffoqp_layer = ffoqp_eq_cst.ffoqp(alpha=100, chunk_size=100)
+            ffoqp_layer = ffoqp_eq_cst.ffoqp(alpha=100, chunk_size=10)
         elif method == 'ffoqp_eq_cst_parallelize':
-            ffoqp_layer = ffoqp_eq_cst_parallelize.ffoqp(alpha=100, chunk_size=100)
+            ffoqp_layer = ffoqp_eq_cst_parallelize.ffoqp(alpha=100, chunk_size=10)
         else:
             raise ValueError('Invalid method: {}'.format(method))
 
     qpth_layer = QPFunction(verbose=-1)
-    directory = 'results/{}/'.format(method)
+    directory = 'results_{}/{}/'.format(args.batch_size, method)
     filename = '{}_ydim{}_lr{}_eps{}_seed{}.csv'.format(method, ydim, learning_rate, eps, seed)
     if os.path.exists(directory + filename):
         os.remove(directory + filename)
