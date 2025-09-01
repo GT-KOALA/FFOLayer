@@ -12,7 +12,7 @@ import cvxpy
 # from qpthlocal.solvers.pdipm import batch as pdipm_b
 # from qpthlocal.solvers.pdipm import spbatch as pdipm_spb
 # from qpthlocal.solvers.cvxpy import forward_single_np
-from utils import forward_single_np, forward_batch_np
+from utils import forward_single_np_eq_cst, forward_batch_np
 from enum import Enum
 from utils import extract_nBatch, expandParam
 from typing import cast, List, Optional, Union
@@ -127,7 +127,7 @@ def cg_solve_list(Aop, b_list, x0_list=None, maxit=50, tol=1e-6):
     return xs
 
 def kkt_schur_fast(Q, A, delta, L_cached=None, eps_q=1e-8, eps_s=1e-10,
-                   cg_threshold=128, cg_maxit=50, cg_tol=1e-6, warm_dlam_list=None):
+                   cg_threshold=256, cg_maxit=50, cg_tol=1e-6, warm_dlam_list=None):
     if delta.dim() == 3 and delta.size(-1) == 1:
         delta = delta.squeeze(-1)                   # (B,n)
     B, n, _ = Q.shape
@@ -162,7 +162,6 @@ def kkt_schur_fast(Q, A, delta, L_cached=None, eps_q=1e-8, eps_s=1e-10,
         if m_b == 0:
             dlam_b = Ab.new_zeros(0, 1)
         elif m_b <= cg_threshold:
-
             ATb = Ab.transpose(-1, -2).contiguous()
             Winv_b = torch.cholesky_solve(ATb, L[b:b+1])  # (1,n,m_b)
             Sb = Ab @ Winv_b.squeeze(0)                   # (m_b,m_b)
@@ -184,8 +183,14 @@ def kkt_schur_fast(Q, A, delta, L_cached=None, eps_q=1e-8, eps_s=1e-10,
 
     dz = dz.squeeze(-1)
 
-    dlam_list = [dl.squeeze(-1) for dl in dlam_list]
-    return dz, dlam_list, L 
+    M = A.shape[1]  # total #constraints before compaction
+    dlam = Q.new_zeros((B, M))
+    for b, (dl_b, idx_b) in enumerate(zip(dlam_list, idxlist)):
+        if dl_b.numel():
+            # dl_b is (m_b, 1) -> (m_b,)
+            dlam[b, idx_b] = dl_b.squeeze(-1)
+
+    return dz, dlam
 
 def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=True, chunk_size=100,
           solver='GUROBI', solver_opts={"verbose": False},
@@ -248,7 +253,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                     i = slice(i, i + size)
                 else:
                     Ai, bi = (A[i], b[i]) if neq > 0 else (None, None)
-                    _, zhati, nui, lami, si = forward_single_np(
+                    _, zhati, nui, lami, si = forward_single_np_eq_cst(
                         *[x.cpu().numpy() if x is not None else None
                           for x in (Q[i], p[i], G[i], h[i], Ai, bi)])
                 # if zhati[0] is None:
@@ -317,7 +322,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                 #h_active = torch.cat((h_active, b.unsqueeze(-1)), dim=1)
 
             if exact_bwd_sol:
-                kkt_schur_fast = torch.compile(kkt_schur_fast, mode="max-autotune")
+                # kkt_schur_fast_fn = torch.compile(kkt_schur_fast, mode="max-autotune")
 
                 _dzhat, _dnu = kkt_schur_fast(Q, G_active, delta_directions)
                 dzhat.copy_(_dzhat.unsqueeze(-1))
@@ -332,7 +337,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                               for x in (Q[i], grad_output[i], None, None, G_active[i], torch.zeros(G_active[i].shape[0], G_active[i].shape[1]))],
                             solver=solver, solver_opts=solver_opts)
                     else:
-                        _, zhati, nui, _, _ = forward_single_np(
+                        _, zhati, nui, _, _ = forward_single_np_eq_cst(
                             *[x.cpu().numpy() if x is not None else None
                               for x in (Q[i], grad_output[i], None, None, G_active[i], torch.zeros(G_active[i].shape[0]))])
 
