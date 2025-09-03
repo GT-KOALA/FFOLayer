@@ -218,7 +218,9 @@ def _BLOLayerFn(
                     constraints=equality_constraints + inequality_constraints
                 )
 
+                # problem.solve(solver=cp.SCS)
                 problem.solve(solver=cp.GUROBI)
+
                 # sol_i = [v.value for v in variables]
                 # equality_dual_i = [
                 #     c.dual_value for c in equality_constraints
@@ -318,13 +320,13 @@ def _BLOLayerFn(
                     equality_dual_params[j].value = equality_dual[j][i]
 
                 problem.solve(solver=cp.GUROBI)
-                sol_i_lagrangian = np.array([v.value for v in variables])
-                sol_i = np.array([sol[j][i] for j in range(len(variables))])
-                print('batch index', i)
-                print(problem)
-                print('forward solve solution', sol_i)
-                print('backward solve solution', sol_i_lagrangian)
-                print('solution distance', np.linalg.norm(sol_i_lagrangian - sol_i))
+                # sol_i_lagrangian = np.array([v.value for v in variables])
+                # sol_i = np.array([sol[j][i] for j in range(len(variables))])
+                # print('batch index', i)
+                # print(problem)
+                # print('forward solve solution', sol_i)
+                # print('backward solve solution', sol_i_lagrangian)
+                # print('solution distance', np.linalg.norm(sol_i_lagrangian - sol_i))
                 for j, v in enumerate(variables):
                     sol_lagrangian[j].append(v.value[np.newaxis,:])
 

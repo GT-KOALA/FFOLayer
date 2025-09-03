@@ -1,10 +1,12 @@
 import unittest
 
 import cvxpy as cp
+import random
 import numpy as np
 import numpy.random as npr
 import torch
 from torch.autograd import grad
+import torch.nn.functional as F
 
 from cvxpylayers.torch import CvxpyLayer
 import diffcp
@@ -12,7 +14,6 @@ import diffcp
 from ffocp_eq import BLOLayer
 
 torch.set_default_dtype(torch.double)
-
 
 def set_seed(x):
     npr.seed(x)
@@ -22,30 +23,52 @@ def set_seed(x):
 def sigmoid(z):
     return 1 / (1 + np.exp(-z))
 
+def _flatten_batchwise(t):
+    # (B, ...) -> (B, -1)
+    return t.reshape(t.shape[0], -1)
+
+def grad_cosine_per_batch(gradA1, gradb1, gradA2, gradb2, eps=1e-12):
+    g1 = torch.cat([_flatten_batchwise(gradA1), _flatten_batchwise(gradb1)], dim=1)
+    g2 = torch.cat([_flatten_batchwise(gradA2), _flatten_batchwise(gradb2)], dim=1)
+    return F.cosine_similarity(g1, g2, dim=1, eps=eps)  # shape: (B,)
 
 class TestCvxpyLayer(unittest.TestCase):
-
     def test_example(self):
+        seed = 1
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+
         n, m = 2, 3
         x = cp.Variable(n)
         A = cp.Parameter((m, n))
-        b = cp.Parameter(m)
+        b = cp.Parameter(n)
         batch_size = 4
         inequality_functions = [-x] # The function form of the inequality constraint
         constraints = [inequality_function <= 0 for inequality_function in inequality_functions]
-        objective = 0.5 * cp.pnorm(A @ x - b, p=2)**2
+        # objective = 0.5 * cp.pnorm(A @ x - b, p=2)**2
+        objective = 0.5 * cp.sum_squares(A @ x) - b @ x
         problem = cp.Problem(cp.Minimize(objective), constraints)
         assert problem.is_dpp()
 
         cvxpylayer = CvxpyLayer(problem, parameters=[A, b], variables=[x])
-        A_tch = torch.randn(batch_size, m, n, requires_grad=True)
-        b_tch = torch.randn(batch_size, m, requires_grad=True)
+        A_tch = torch.randn(batch_size, m, n, requires_grad=True, dtype=torch.double)
+        b_tch = torch.randn(batch_size, n, requires_grad=True, dtype=torch.double)
+
+        optimizer = torch.optim.SGD([A_tch, b_tch], lr=0.01)
 
         # solve the problem
         solution = cvxpylayer(A_tch, b_tch)
+        solution = solution[0]
         print('cvxpylayer output', solution)
         # compute the gradient of the sum of the solution with respect to A, b
-        # solution.sum().backward()
+        solution.sum().backward()
+        cvxpylayer_grad = A_tch.grad.clone().detach()
+        cvxpylayer_grad_b = b_tch.grad.clone().detach()
+
+        optimizer.zero_grad()
 
         # Bilevel optimization layer
         blolayer = BLOLayer(objective=objective, equality_functions=[], inequality_functions=inequality_functions, parameters=[A, b], variables=[x], alpha=100)
@@ -56,6 +79,24 @@ class TestCvxpyLayer(unittest.TestCase):
 
         # compute the gradient of the sum of the solution with respect to A, b
         blo_solution.sum().backward()
+        blo_grad = A_tch.grad.clone().detach()
+        blo_grad_b = b_tch.grad.clone().detach()
+
+        cosA = F.cosine_similarity(_flatten_batchwise(cvxpylayer_grad),
+                           _flatten_batchwise(blo_grad), dim=1)
+        cosb = F.cosine_similarity(_flatten_batchwise(cvxpylayer_grad_b),
+                                _flatten_batchwise(blo_grad_b), dim=1)
+
+        # cos_all = grad_cosine_per_batch(cvxpylayer_grad, cvxpylayer_grad_b,
+        #                                 blo_grad,       blo_grad_b)
+        print("cos(A) per-batch:", cosA)
+        print("cos(b) per-batch:", cosb)
+
+        # single global cosine across all batches & params
+        g1_global = torch.cat([cvxpylayer_grad.reshape(-1), cvxpylayer_grad_b.reshape(-1)])
+        g2_global = torch.cat([blo_grad.reshape(-1), blo_grad_b.reshape(-1)])
+        cos_global = torch.dot(g1_global, g2_global) / (g1_global.norm() * g2_global.norm())
+        print("global cosine:", cos_global)
 
     '''
     @unittest.skip
