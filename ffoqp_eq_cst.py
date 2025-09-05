@@ -35,7 +35,7 @@ from typing import cast, List, Optional, Union
 
 def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=True, chunk_size=100,
           solver='GUROBI', solver_opts={"verbose": False},
-          exact_bwd_sol=False, dual_cutoff=1e-4):
+          exact_bwd_sol=True, dual_cutoff=1e-4):
     """ -> kamo
     change lamb to alpha to prevent confusion
     """
@@ -163,13 +163,19 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                 #h_active = torch.cat((h_active, b.unsqueeze(-1)), dim=1)
 
             if exact_bwd_sol:
-                Lq, Qq = torch.linalg.eigh(Q)
-                rsqrtQ = Qq @ torch.diag_embed(torch.rsqrt(Lq)) @ Qq.transpose(-1, -2)
-                aapl = rsqrtQ @ -delta_directions
-                Aq = G_active @ rsqrtQ
+                sqrtQ = torch.linalg.cholesky(Q)
+                aapl = torch.linalg.solve_triangular(
+                    sqrtQ,
+                    -delta_directions,
+                    upper=False)
+                Aq = torch.linalg.solve_triangular(
+                    sqrtQ.mT,
+                    G_active,
+                    upper=True,
+                    left=False)
                 pine = torch.linalg.lstsq(Aq, Aq @ aapl).solution
-                dlam = torch.linalg.lstsq(Aq.transpose(-1, -2), pine, driver='gelsd').solution
-                dz = rsqrtQ @ (aapl - pine)
+                dlam = torch.linalg.lstsq(Aq.mT, pine, driver='gelsd').solution
+                dz = torch.linalg.solve_triangular(sqrtQ.mT, aapl - pine, upper=True)
                 dzhat[:] = dz
                 dnu[:] = dlam[..., 0]
             else:
