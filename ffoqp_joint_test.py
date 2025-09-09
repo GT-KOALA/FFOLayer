@@ -135,5 +135,5 @@ if __name__ == "__main__":
     ax2.set_xscale('log')
     ax2.legend()
     plt.tight_layout()
-    # plt.savefig('ffoqp_joint_test.png')
+    plt.savefig('ffoqp_joint_test.png')
     plt.show()
