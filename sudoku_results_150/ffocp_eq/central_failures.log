@@ -1,0 +1,26 @@
+2025-09-27 23:40:13,183 - my_logger - INFO - 
+
+2025-09-27 23:40:13,183 - my_logger - INFO - >>>>>>> START LOGGING <<<<<<<<
+2025-09-28 01:16:44,022 - my_logger - ERROR - ffocp_eq_n2_lr0.1_seed1: An error occurred: Solver 'GUROBI' failed. Try another solver, or solve with verbose=True for more information.
+Traceback (most recent call last):
+  File "/nethome/sho73/bilevel_layer_project/bilevel-layer_package/sudoku/main_sudoku.py", line 215, in <module>
+    train_test_loop(args, experiment_dir, n=n)
+  File "/nethome/sho73/bilevel_layer_project/bilevel-layer_package/sudoku/main_sudoku.py", line 118, in train_test_loop
+    loss.backward()
+  File "/nethome/sho73/miniconda3/envs/bilevel/lib/python3.10/site-packages/torch/_tensor.py", line 581, in backward
+    torch.autograd.backward(
+  File "/nethome/sho73/miniconda3/envs/bilevel/lib/python3.10/site-packages/torch/autograd/__init__.py", line 347, in backward
+    _engine_run_backward(
+  File "/nethome/sho73/miniconda3/envs/bilevel/lib/python3.10/site-packages/torch/autograd/graph.py", line 825, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+  File "/nethome/sho73/miniconda3/envs/bilevel/lib/python3.10/site-packages/torch/autograd/function.py", line 307, in apply
+    return user_fn(self, *args)
+  File "/nethome/sho73/bilevel_layer_project/bilevel-layer_package/ffocp_eq.py", line 336, in backward
+    problem.solve(solver=cp.GUROBI)
+  File "/nethome/sho73/miniconda3/envs/bilevel/lib/python3.10/site-packages/cvxpy/problems/problem.py", line 609, in solve
+    return solve_func(self, *args, **kwargs)
+  File "/nethome/sho73/miniconda3/envs/bilevel/lib/python3.10/site-packages/cvxpy/problems/problem.py", line 1222, in _solve
+    self.unpack_results(solution, solving_chain, inverse_data)
+  File "/nethome/sho73/miniconda3/envs/bilevel/lib/python3.10/site-packages/cvxpy/problems/problem.py", line 1547, in unpack_results
+    raise error.SolverError(
+cvxpy.error.SolverError: Solver 'GUROBI' failed. Try another solver, or solve with verbose=True for more information.

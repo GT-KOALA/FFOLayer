@@ -5,17 +5,17 @@ import time
 import os
 import argparse
 from torch.utils.data import DataLoader, TensorDataset, Subset
-from models_sudoku import BLOSudoku, OptNetSudoku, SingleOptLayerSudoku
+from models_sudoku import BLOSudokuLearnA, OptNetSudokuLearnA, SingleOptLayerSudoku
 
-from utils_sudoku import decode_onehot
+from utils_sudoku import decode_onehot, computeErr
 
 if __name__=="__main__":
     n = 2
     board_side_len = n**2
     Qpenalty = 0.1
     batch_size = 1
-    method = "qpth"
-    weight_path = f"./sudoku_results_32/{method}/model_epoch10.pt"
+    method = "ffocp_eq"
+    weight_path = f"./sudoku_results_150/{method}/model_epoch10.pt"
     
     device = torch.device('cpu') #torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -35,7 +35,7 @@ if __name__=="__main__":
     
    # Fixed split indices
     num_samples = len(dataset)
-    train_split = 0.8
+    train_split = 0.9
     train_size = int(num_samples * train_split)
     test_size = num_samples - train_size
 
@@ -56,11 +56,15 @@ if __name__=="__main__":
     model = SingleOptLayerSudoku(n, learnable_parts=["eq"], layer_type=method, Qpenalty=0.1, alpha=1000)
     model.load_state_dict(torch.load(weight_path, weights_only=True))
     
-    for i, (x, y) in enumerate(train_loader):
+    for i, (x, y) in enumerate(test_loader):
         x = x.to(device)
         y = y.to(device)
+        print(x.shape)
         
         pred = model(x)
+        
+        print(f"pred error: {computeErr(pred)}")
+        print(f"GT error: {computeErr(y)}")
         
         
         print(f"test example: {i}")

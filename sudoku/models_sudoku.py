@@ -10,38 +10,19 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import cvxpy as cp
 from ffocp_eq import BLOLayer
+from ffoqp_eq_cst import ffoqp as ffoqpLayer
 from qpth.qp import QPFunction
 from cvxpylayers.torch import CvxpyLayer
 from cvxpylayers_local.cvxpylayer import CvxpyLayer as LPGDLayer
 
+
 from utils_sudoku import setup_cvx_qp_problem, get_sudoku_matrix
-from constants import FFOCP_EQ, QPTH, LPGD, CVXPY_LAYER
+from constants import FFOCP_EQ, QPTH, LPGD, CVXPY_LAYER, FFOQP_EQ
 
 
 
 
-class MLP(nn.Module):
-    '''
-    2 layers of {FC-ReLU-BN} and a final layer of FC
-    '''
-    def __init__(self, input_dim, output_dim, hidden_dim=128):
-        super(MLP, self).__init__()
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-        self.fc1 = nn.Linear(input_dim, hidden_dim)
-        self.batch_norm1 = nn.BatchNorm1d(hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
-        self.batch_norm2 = nn.BatchNorm1d(hidden_dim)
-        self.fc3 = nn.Linear(hidden_dim, output_dim)
-        self.activation = nn.ReLU()
 
-    def forward(self, x):
-        x = x.view(-1, self.input_dim)
-        x = self.activation(self.batch_norm1(self.fc1(x)))
-        x = self.activation(self.batch_norm2(self.fc2(x)))
-        x = self.fc3(x)
-        
-        return x
     
 def get_default_sudoku_params(n, Qpenalty=0.1, get_equality=True):
     '''
@@ -109,7 +90,7 @@ def get_Q_from_L(self, L, eps):
     return Q
 
 class SingleOptLayerSudoku(nn.Module):
-    def __init__(self, n, learnable_parts, layer_type, Qpenalty=0.1, alpha=100):
+    def __init__(self, n, learnable_parts, layer_type, Qpenalty=0.1, alpha=100, init_learnable_vals=None):
         '''
         The architecture is {parameter - optLayer}.
         
@@ -122,8 +103,11 @@ class SingleOptLayerSudoku(nn.Module):
             - delta = 1/alpha, which is the perturbation constant for finite difference
             - learnable_parts: a list of strings chosen from ["ineq", "eq"]
             - QPenalty: eps in the LP
+            - init_learnable_vals: a dictionary containing initial values for learnable parts, keys can be "A", "G", "z0_a", "z0_g", "s0"
         '''
         super().__init__()
+        self.layer_type = layer_type
+        assert(layer_type in [QPTH, FFOCP_EQ, LPGD, CVXPY_LAYER, FFOQP_EQ])
        
         param_vals = get_default_sudoku_params(n, Qpenalty=Qpenalty, get_equality=True)
         
@@ -131,7 +115,7 @@ class SingleOptLayerSudoku(nn.Module):
         self.num_ineq = param_vals["G"].shape[0]
         self.num_eq = param_vals["A"].shape[0]
         
-        ## whether objective is learnable, or inequalit or equality is learnable, exactly one of them
+        ## whether objective is learnable, or inequalit or equality is learnable
         expected_parts = ["ineq", "eq"]
         self.ineq_learnable = "ineq" in learnable_parts
         self.eq_learnable = "eq" in learnable_parts
@@ -140,30 +124,42 @@ class SingleOptLayerSudoku(nn.Module):
                     raise Exception(f"unexpected input: {part}")
                 
         assert(len(learnable_parts)!=0)
+        assert(len(learnable_parts)==1)
         
-        self.register_buffer("Q", param_vals["Q"])
+        if self.layer_type in [QPTH, FFOQP_EQ]:
+            self.register_buffer("Q", param_vals["Q"])
+        else:
+            self.register_buffer("Q", param_vals["Q"]**0.5) ## due to the setup cvxpy problem method
         
         ######## set learnable parameters and constant parameters
         if self.eq_learnable:
-            self.A = Parameter(torch.rand((self.num_eq, self.y_dim)).double())
-            self.z0_a = Parameter(torch.rand((self.y_dim,)).double())
+            if init_learnable_vals is not None:
+                self.A = Parameter(init_learnable_vals["A"])
+                self.z0_a = Parameter(init_learnable_vals["z0_a"])
+            else:
+                self.A = Parameter(torch.rand((self.num_eq, self.y_dim)).double())
+                self.z0_a = Parameter(torch.rand((self.y_dim,)).double())
         else:
             for name in ["A", "b"]:
                 self.register_buffer(name, param_vals[name])
             
         if self.ineq_learnable:
-            self.G = Parameter(torch.rand((self.num_eq, self.y_dim)).double())
-            self.z0_g = Parameter(torch.rand((self.y_dim,)).double())
-            self.log_s0 = Parameter(torch.rand((self.y_dim,)).double())
+            if init_learnable_vals is not None:
+                self.G = Parameter(init_learnable_vals["G"])
+                self.z0_g = Parameter(init_learnable_vals["z0_g"])
+                self.log_s0 = Parameter((init_learnable_vals["log_s0"]))
+            else:
+                self.G = Parameter(torch.rand((self.num_eq, self.y_dim)).double())
+                self.z0_g = Parameter(torch.rand((self.y_dim,)).double())
+                self.log_s0 = Parameter(torch.rand((self.y_dim,)).double())
         else:
             for name in ["G", "h"]:
                 self.register_buffer(name, param_vals[name])
+                
         
-        self.layer_type = layer_type
-        assert(layer_type in [QPTH, FFOCP_EQ, LPGD, CVXPY_LAYER])
         
         ######## set up optimization layer
-        if self.layer_type != QPTH:
+        if self.layer_type not in [QPTH, FFOQP_EQ]:
             problem, objective, ineq_functions, eq_functions, params, variables = setup_cvx_qp_problem(opt_var_dim=self.y_dim, num_ineq=self.num_ineq, num_eq=self.num_eq)
             
             if layer_type==FFOCP_EQ:
@@ -172,6 +168,12 @@ class SingleOptLayerSudoku(nn.Module):
                 self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
             elif layer_type==LPGD:
                 self.optlayer = LPGDLayer(problem, parameters=params, variables=variables, lpgd=True)
+        else:
+            if self.layer_type==QPTH:
+                self.optlayer = QPFunction(verbose=-1)
+            elif self.layer_type==FFOQP_EQ:
+                self.optlayer = ffoqpLayer(alpha=alpha)
+            
             
         
         
@@ -187,12 +189,22 @@ class SingleOptLayerSudoku(nn.Module):
             h = self.h
         
         if self.eq_learnable:
-            b = get_feasible_b(self.A, self.z0_a) #torch.matmul(self.A, self.z0_a)
+            b = get_feasible_b(self.A, self.z0_a.exp()) #torch.matmul(self.A, self.z0_a)
         else:
             b = self.b
+        
+        # torch.save(self.A.data.clone().detach().cpu(), "sudoku/bad_A.pt")
+        # torch.save(self.z0_a.data.clone().detach().cpu(), "sudoku/bad_z0_a.pt")
+        # torch.save(b.clone().detach().cpu(), "sudoku/bad_b.pt")
+        # torch.save(p.clone().detach().cpu(), "sudoku/bad_p.pt")
+        # print(f"rank A: {np.linalg.matrix_rank(self.A.cpu().detach().numpy())}")
 
         if self.layer_type==QPTH:
-            sol = QPFunction(verbose=-1)(
+            sol = self.optlayer(
+                self.Q, p, self.G, h, self.A, b
+            )
+        elif self.layer_type==FFOQP_EQ:
+            sol = self.optlayer(
                 self.Q, p, self.G, h, self.A, b
             )
         else:
@@ -206,19 +218,15 @@ class SingleOptLayerSudoku(nn.Module):
             params_batched = [Q_batched, p, G_batched, h_batched, A_batched, b_batched]
             
             sol, = self.optlayer(*params_batched)
-        
+
+            #print(f"sol: {sol}")
+
         return sol.to(x.dtype).reshape(*puzzle_shape)
 
 
     
-class OptNetSudoku(nn.Module):
-    '''
-    solve sudoku , represented as the linear program 
-    min_y eps/2*y^Ty-p^Ty
-        s.t. Ay=b
-             Gy<=h
-    '''
-    def __init__(self, n, Qpenalty=0.1):
+class OptNetSudokuLearnA(nn.Module):
+    def __init__(self, n, Qpenalty=0.1, init_A=None):
         ## Qpenalty: ridge term's coefficient
         super().__init__()
         assert(n==2)
@@ -232,7 +240,11 @@ class OptNetSudoku(nn.Module):
 
         # Trainable parameter
         A_shape = (40, y_dim)  # from true solution
-        self.A = Parameter(torch.rand(A_shape, dtype=torch.double))
+
+        if init_A is None:
+            self.A = Parameter(torch.rand(A_shape, dtype=torch.double))
+        else:
+            self.A = Parameter(init_A)
 
     def forward(self, puzzles):
         nBatch = puzzles.size(0)
@@ -245,8 +257,59 @@ class OptNetSudoku(nn.Module):
         )
         return sol.to(puzzles.dtype).view_as(puzzles)
     
+class CvxpyLayerSudokuLearnA(nn.Module):
+    def __init__(self, n, Qpenalty=0.1, init_A=None):
+        super().__init__()
+       
+        param_vals = get_default_sudoku_params(n, Qpenalty=Qpenalty, get_equality=True)
+        
+        self.y_dim = (n**2)**3
+        self.num_ineq = param_vals["G"].shape[0]
+        self.num_eq = param_vals["A"].shape[0]
+        
+       
+        self.register_buffer("Q", param_vals["Q"]**0.5) ## due to the setup cvxpy problem method
+        if init_A is not None:
+            self.A = Parameter(init_A)
+        else:
+            self.A = Parameter(torch.rand((self.num_eq, self.y_dim)).double())
+            
+        for name in ["b"]:
+            self.register_buffer(name, param_vals[name])
+            
+        for name in ["G", "h"]:
+            self.register_buffer(name, param_vals[name])
+                
+        ######## set up optimization layer
+       
+        problem, objective, ineq_functions, eq_functions, params, variables = setup_cvx_qp_problem(opt_var_dim=self.y_dim, num_ineq=self.num_ineq, num_eq=self.num_eq)
+        self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
+            
+        
+    def forward(self, x):
+        puzzle_shape = x.shape
+        nBatch = x.size(0)
+        x = x.view(nBatch, -1) #(B, y_dim)
+        p = -x.double() #(batch, y_dim)
+        
+        h = self.h
+        b = self.b
+
+        # Expand constant params along batch dimension
+        Q_batched = self.Q.unsqueeze(0).expand(nBatch, -1, -1)   # (batch, y_dim, y_dim)
+        G_batched = self.G.unsqueeze(0).expand(nBatch, -1, -1)   # (batch, num_ineq, y_dim)
+        h_batched = h.unsqueeze(0).expand(nBatch, -1)       # (batch, num_ineq)
+        A_batched = self.A.unsqueeze(0).expand(nBatch, -1, -1)   # (batch, num_eq, y_dim)
+        b_batched = b.unsqueeze(0).expand(nBatch, -1)       # (batch, num_eq)
+        
+        params_batched = [Q_batched, p, G_batched, h_batched, A_batched, b_batched]
+        
+        sol, = self.optlayer(*params_batched)
+        
+        return sol.to(x.dtype).reshape(*puzzle_shape)
     
-class BLOSudoku(nn.Module):
+    
+class BLOSudokuLearnA(nn.Module):
     def __init__(self, n, Qpenalty=0.1, alpha=100):
         '''
         delta = 1/alpha, which is the perturbation constant for finite difference
@@ -285,7 +348,7 @@ class BLOSudoku(nn.Module):
         A_batched = self.A.unsqueeze(0).expand(nBatch, -1, -1)   # (batch, num_eq, y_dim)
         b_batched = self.b.unsqueeze(0).expand(nBatch, -1)       # (batch, num_eq)
         
-        # print("####### rank: ", np.linalg.matrix_rank(self.A.cpu().detach().numpy()))
+        print("####### rank: ", np.linalg.matrix_rank(self.A.cpu().detach().numpy()))
 
         params_batched = [Q_batched, p, G_batched, h_batched, A_batched, b_batched]
         
@@ -293,7 +356,29 @@ class BLOSudoku(nn.Module):
         # print('blo_layer output', blo_solution)
         
         return blo_solution.to(puzzles.dtype).view_as(puzzles)
-    
+
+class MLP(nn.Module):
+    '''
+    2 layers of {FC-ReLU-BN} and a final layer of FC
+    '''
+    def __init__(self, input_dim, output_dim, hidden_dim=128):
+        super(MLP, self).__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.fc1 = nn.Linear(input_dim, hidden_dim)
+        self.batch_norm1 = nn.BatchNorm1d(hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.batch_norm2 = nn.BatchNorm1d(hidden_dim)
+        self.fc3 = nn.Linear(hidden_dim, output_dim)
+        self.activation = nn.ReLU()
+
+    def forward(self, x):
+        x = x.view(-1, self.input_dim)
+        x = self.activation(self.batch_norm1(self.fc1(x)))
+        x = self.activation(self.batch_norm2(self.fc2(x)))
+        x = self.fc3(x)
+        
+        return x
     
 # class OptLayerSudoku(nn.Module):
 #     def __init__(self, y_dim, num_ineq, num_eq, 

@@ -1,0 +1,2 @@
+epoch, train_loss, test_loss, forward_time, backward_time, train_error, test_error
+0,0.9022322684526444,0.3603333447660719,2994.9437172412872,338.5710256099701,1.0,1.0

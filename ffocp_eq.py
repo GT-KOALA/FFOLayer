@@ -315,8 +315,8 @@ def _BLOLayerFn(
             problem = cp.Problem(cp.Minimize(new_objective), constraints=equality_constraints + active_ineq_constraints)
             
             #### SHING HEI ADDED
-            # new_equality_dual = [[] for c in equality_functions]
-            # new_active_dual = [[] for c in active_ineq_constraints]
+            new_equality_dual = [[] for c in equality_functions]
+            new_active_dual = [[] for c in active_ineq_constraints]
 
             for i in range(batch_size):
                 for j, _ in enumerate(param_order):
@@ -345,17 +345,17 @@ def _BLOLayerFn(
                     sol_lagrangian[j].append(v.value[np.newaxis,:])
                 
                 ### SHING HEI ADDED
-                # for c_id,c in enumerate(equality_constraints):
-                #     new_equality_dual[c_id].append(c.dual_value[np.newaxis,:])
-                # for c_id,c in enumerate(active_ineq_constraints):
-                #     active_mask = np.array([a.value for a in active_mask_params])
-                #     new_active_dual[c_id].append(c.dual_value[np.newaxis,:])
+                for c_id,c in enumerate(equality_constraints):
+                    new_equality_dual[c_id].append(c.dual_value[np.newaxis,:])
+                for c_id,c in enumerate(active_ineq_constraints):
+                    active_mask = np.array([a.value for a in active_mask_params])
+                    new_active_dual[c_id].append(c.dual_value[np.newaxis,:])
                     
             ### SHING HEI ADDED
-            # for c_id in range(len(equality_constraints)):
-            #     new_equality_dual[c_id] = np.concatenate(new_equality_dual[c_id])
-            # for c_id in range(len(active_ineq_constraints)):
-            #     new_active_dual[c_id] = np.concatenate(new_active_dual[c_id])
+            for c_id in range(len(equality_constraints)):
+                new_equality_dual[c_id] = np.concatenate(new_equality_dual[c_id])
+            for c_id in range(len(active_ineq_constraints)):
+                new_active_dual[c_id] = np.concatenate(new_active_dual[c_id])
 
             new_sol = [to_torch(np.concatenate(v), ctx.dtype, ctx.device) for v in sol_lagrangian]
             new_inequality_dual_torch = [to_torch(v, ctx.dtype, ctx.device) for v in inequality_dual]
@@ -364,8 +364,8 @@ def _BLOLayerFn(
             #print(f"old inequality dual: {[d[0] for d in new_inequality_dual_torch]}")
             
             ###### SHING HEI ADDED 
-            # new_inequality_dual_torch = [to_torch(v, ctx.dtype, ctx.device) for v in new_active_dual]
-            # new_equality_dual_torch = [to_torch(v, ctx.dtype, ctx.device) for v in new_equality_dual]
+            new_inequality_dual_torch = [to_torch(v, ctx.dtype, ctx.device) for v in new_active_dual]
+            new_equality_dual_torch = [to_torch(v, ctx.dtype, ctx.device) for v in new_equality_dual]
             # print(f"active dual: {[d[0] for d in new_inequality_dual_torch]}")
 
             finite_difference_obj = objective + equality_dual_product + ineq_constraints_dual_product
