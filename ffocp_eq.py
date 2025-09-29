@@ -314,14 +314,18 @@ def _BLOLayerFn(
 
             # “Activate” only those inequality entries where mask==1:
             # mask * ineq == 0  -> forces ineq==0 when mask=1; becomes 0==0 when mask=0.
+
+            # inequality_functions should be original y. 
             active_ineq_constraints = [
                 cp.multiply(active_mask_params[j], inequality_functions[j]) == 0
                 for j in range(len(inequality_functions))
             ]
+
             active_ineq_constraints_dual_product = cp.sum([
                 cp.sum(cp.multiply(dual, cp.multiply(active_mask_params[j], inequality_functions[j])))
                 for j, dual in enumerate(inequality_dual_params)
             ])
+            
             problem = cp.Problem(cp.Minimize(new_objective), constraints=equality_constraints + active_ineq_constraints)
             
             #### SHING HEI ADDED
@@ -390,12 +394,34 @@ def _BLOLayerFn(
             #     provided_vars_list=[*variables, *param_order, *equality_dual_params, *inequality_dual_params]
             # ).torch_expression
 
-            finite_difference_obj = objective + equality_dual_product + active_ineq_constraints_dual_product
+            # finite_difference_obj = objective + equality_dual_product + active_ineq_constraints_dual_product
 
-            _torch_exp = TorchExpression(
-                finite_difference_obj,
-                provided_vars_list=[*variables, *param_order, *equality_dual_params, *inequality_dual_params, *active_mask_params]
+            # _torch_exp = TorchExpression(
+            #     finite_difference_obj,
+            #     provided_vars_list=[*variables, *param_order, *equality_dual_params, *inequality_dual_params, *active_mask_params]
+            # ).torch_expression
+
+            g_cp_expr = objective
+            g_torch = TorchExpression(
+                g_cp_expr,
+                provided_vars_list=[*variables, *param_order]
             ).torch_expression
+
+            ineq_torch_list = [
+                TorchExpression(
+                    ineq_expr,
+                    provided_vars_list=[*variables, *param_order]
+                ).torch_expression
+                for ineq_expr in inequality_functions
+            ]
+
+            equality_torch_list = [
+                TorchExpression(
+                    eq_expr,
+                    provided_vars_list=[*variables, *param_order]
+                ).torch_expression
+                for eq_expr in equality_functions
+            ]
 
             params_req = [p.detach().clone().requires_grad_(True) if p.requires_grad else p.detach().clone()for p in params]
 
@@ -436,10 +462,22 @@ def _BLOLayerFn(
 
                     mask_list = make_mask_torch_for_i(i)
 
-                    new_val_i = _torch_exp(*vars_new_i, *params_i, *new_eq_dual_i, *new_ineq_dual_i, *mask_list)
-                    old_val_i = _torch_exp(*vars_old_i, *params_i, *old_eq_dual_i, *old_ineq_dual_i, *mask_list)
-                    
-                    loss += new_val_i - old_val_i
+                    g_new = g_torch(*vars_new_i, *params_i)
+                    g_old = g_torch(*vars_old_i, *params_i)
+                    ineq_old_vals = [h_fn(*vars_old_i, *params_i) for h_fn in ineq_torch_list]
+                    eq_old_vals = [h_fn(*vars_old_i, *params_i) for h_fn in equality_torch_list]
+                    mask_list = [m.to(dtype=ctx.dtype, device=ctx.device) for m in mask_list]
+
+                    ineq_active = [m * h for m, h in zip(mask_list, ineq_old_vals)]
+
+                    _diff_ineq = sum(((new_ineq_dual_i[j] - old_ineq_dual_i[j]) * ineq_active[j]).sum() for j in range(len(ineq_active)))
+                    _diff_eq = sum(((new_eq_dual_i[j] - old_eq_dual_i[j]) * eq_old_vals[j]).sum() for j in range(len(eq_old_vals)))
+
+                    loss += g_new - g_old + _diff_ineq + _diff_eq
+
+                    # new_val_i = _torch_exp(*vars_new_i, *params_i, *new_eq_dual_i, *new_ineq_dual_i, *mask_list)
+                    # old_val_i = _torch_exp(*vars_old_i, *params_i, *old_eq_dual_i, *old_ineq_dual_i, *mask_list)
+                    # loss +=  new_val_i - old_val_i
 
                 loss = alpha * loss
 
