@@ -231,20 +231,6 @@ def _BLOLayerFn(
                 # problem.solve(solver=cp.SCS)
                 problem.solve(solver=cp.GUROBI, **{"Threads": n_threads, "OutputFlag": 0})
                 
-                # print("Problem status:", problem.status)
-                # if problem.status != cp.OPTIMAL:
-                #     print("GUROBI failed or problem infeasible/unbounded!")
-                #     for v_id, v in enumerate(variables):
-                #         print(f"Variable {v_id} value:", v.value)
-                
-                # sol_i = [v.value for v in variables]
-                # equality_dual_i = [
-                #     c.dual_value for c in equality_constraints
-                # ]
-                # inequality_dual_i = [
-                #     c.dual_value for c in inequality_constraints
-                # ]
-
                 # convert to torch tensors and incorporate info_forward
                 for v_id, v in enumerate(variables):
                     sol_numpy[v_id].append(v.value[np.newaxis,:])
@@ -335,19 +321,11 @@ def _BLOLayerFn(
                     equality_dual_params[j].value = equality_dual[j][i]
 
                 problem.solve(solver=cp.GUROBI, **{"Threads": n_threads, "OutputFlag": 0})
-                # problem.solve(solver=cp.OSQP, eps_abs=1e-2, eps_rel=1e-2, warm_start=True, verbose=False)
-                # import pdb; pdb.set_trace()
-                # sol_i_lagrangian = np.array([v.value for v in variables])
-                # sol_i = np.array([sol[j][i] for j in range(len(variables))])
-                # print('batch index', i)
-                # print(problem)
-                # print('forward solve solution', sol_i)
-                # print('backward solve solution', sol_i_lagrangian)
-                # print('solution distance', np.linalg.norm(sol_i_lagrangian - sol_i))
                 try:
                     for j, v in enumerate(variables):
                         new_sol_lagrangian[j].append(v.value[np.newaxis,:])
                 except:
+                    import pdb; pdb.set_trace()
                     print("GUROBI failed, using OSQP")
                     problem.solve(solver=cp.OSQP, eps_abs=1e-4, eps_rel=1e-4, warm_start=True, verbose=False)
                     for j, v in enumerate(variables):
@@ -371,47 +349,12 @@ def _BLOLayerFn(
             new_sol = [to_torch(np.concatenate(v), ctx.dtype, ctx.device) for v in new_sol_lagrangian]
             new_inequality_dual_torch = [to_torch(v, ctx.dtype, ctx.device) for v in new_active_dual]
             new_equality_dual_torch = [to_torch(v, ctx.dtype, ctx.device) for v in new_equality_dual]
-
-            # import pdb; pdb.set_trace()
-        
-            # ZIHAO CHANGED
-            # finite_difference_obj = objective + eq_dual_product + ineq_dual_product
-            # _torch_exp = TorchExpression(
-            #     finite_difference_obj,
-            #     provided_vars_list=[*variables, *param_order, *equality_dual_params, *inequality_dual_params]
-            # ).torch_expression
-
-            # finite_difference_obj = objective + eq_dual_product + active_ineq_dual_product
-
-            # _torch_exp = TorchExpression(
-            #     finite_difference_obj,
-            #     provided_vars_list=[*variables, *param_order, *equality_dual_params, *inequality_dual_params, *active_mask_params]
-            # ).torch_expression
-
-            # compute \tilde{g}(x,y) = g(x,y) + (\lambda^*)^\top h(x,y) + (\nu^*)^\top e(x,y)
-            # g_tilde_expr = objective + eq_dual_product + ineq_dual_product
+    
             g_tilde_expr = objective + eq_dual_product + ineq_dual_product
             g_tilde_torch = TorchExpression(
                 g_tilde_expr,
                 provided_vars_list=[*variables, *param_order, *equality_dual_params, *inequality_dual_params]
             ).torch_expression
-
-            # compute h_tilde separately for equality and active inequality constraints
-            ineq_torch_list = [
-                TorchExpression(
-                    ineq_expr,
-                    provided_vars_list=[*variables, *param_order]
-                ).torch_expression
-                for ineq_expr in inequality_functions
-            ]
-
-            eq_torch_list = [
-                TorchExpression(
-                    eq_expr,
-                    provided_vars_list=[*variables, *param_order]
-                ).torch_expression
-                for eq_expr in equality_functions
-            ]
 
             params_req = [p.detach().clone().requires_grad_(True) if p.requires_grad else p.detach().clone()for p in params]
 
@@ -442,29 +385,6 @@ def _BLOLayerFn(
                     new_ineq_dual_i = [d[i] for d in new_inequality_dual_torch]
                     old_eq_dual_i   = [to_torch(d[i], ctx.dtype, ctx.device) for d in equality_dual]
                     old_ineq_dual_i = [to_torch(d[i], ctx.dtype, ctx.device) for d in inequality_dual]
-                    
-                    # print(f"params: {[p.shape for p in params]}")
-                    # print(f"params_req: {[p.shape for p in params_req]}")
-                    # print(f"params_{i} shape: {[out.shape for out in params_i]}")
-                    # print(f"eq dual_{i}shape: {[d.shape for d in new_eq_dual_i]}")
-                    # print(f"ineq dual_{i} shape: {[d.shape for d in new_ineq_dual_i]}")
-                    # print(f"var_new_{i}: {[v.shape for v in vars_new_i]}")
-
-                    mask_list = make_mask_torch_for_i(i)
-
-                    # g_new = g_tilde_torch(*vars_new_i, *params_i)
-                    # g_old = g_tilde_torch(*vars_old_i, *params_i)
-
-                    # ineq_old_vals = [h_fn(*vars_old_i, *params_i) for h_fn in ineq_torch_list]
-                    # eq_old_vals = [h_fn(*vars_old_i, *params_i) for h_fn in eq_torch_list]
-
-                    # mask_list = [m.to(dtype=ctx.dtype, device=ctx.device) for m in mask_list]
-                    # ineq_active = [m * h for m, h in zip(mask_list, ineq_old_vals)]
-
-                    # _diff_ineq = sum(((new_ineq_dual_i[j] - old_ineq_dual_i[j]) * ineq_active[j]).sum() for j in range(len(ineq_active)))
-                    # _diff_eq = sum(((new_eq_dual_i[j] - old_eq_dual_i[j]) * eq_old_vals[j]).sum() for j in range(len(eq_old_vals)))
-
-                    # loss += g_new - g_old + _diff_ineq + _diff_eq
 
                     new_val_i = g_tilde_torch(*vars_new_i, *params_i, *new_eq_dual_i, *new_ineq_dual_i)
                     old_val_i = g_tilde_torch(*vars_old_i, *params_i, *old_eq_dual_i, *old_ineq_dual_i)
@@ -472,18 +392,9 @@ def _BLOLayerFn(
 
                 loss = alpha * loss
 
-            # grads_req = torch.autograd.grad(
-            #     loss, params_req, allow_unused=True, retain_graph=False, create_graph=False
-            # )
-
             loss.backward()
-
             grads = [p.grad for p in params_req]
-            # print("!!!! ffocp_eq grads: \n", grads)
-
-            # convert to torch tensors and incorporate info_backward
-            # grad = [to_torch(g, ctx.dtype, ctx.device) for g in grad_numpy]
-            # info.update(info_backward)
+   
             return tuple(grads)
 
     return _BLOLayerFnFn.apply

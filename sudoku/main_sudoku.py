@@ -200,7 +200,7 @@ def train_test_loop(args, experiment_dir, n):
  
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--method', type=str, default='lpgd', help='ffocp_eq, lpgd, qpth, cvxpylayer')
+    parser.add_argument('--method', type=str, default='ffocp_eq', help='ffocp_eq, lpgd, qpth, cvxpylayer')
     parser.add_argument('--epochs', type=int, default=10, help='number of epochs')
     parser.add_argument('--seed', type=int, default=1, help='random seed')
     parser.add_argument('--lr', type=float, default=0.1, help='learning rate')
