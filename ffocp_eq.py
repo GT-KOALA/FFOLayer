@@ -202,6 +202,7 @@ def _BLOLayerFn(
             sol_numpy       = [[] for v in variables]
             equality_dual   = [[] for c in equality_functions]
             inequality_dual = [[] for c in inequality_functions]
+            ineq_slack_residual = [[] for c in inequality_functions]
 
             equality_constraints = [equality_function == 0 for equality_function in equality_functions]
             inequality_constraints = [inequality_function <= 0 for inequality_function in inequality_functions]
@@ -242,6 +243,10 @@ def _BLOLayerFn(
                 for c_id,c in enumerate(inequality_constraints):
                     inequality_dual[c_id].append(c.dual_value[np.newaxis,:])
 
+                for c_id, expr in enumerate(inequality_functions):
+                    val = expr.value
+                    ineq_slack_residual[c_id].append(val[np.newaxis,:])
+
             for v_id in range(len(variables)):
                 sol[v_id] = torch.cat(sol[v_id])
                 sol_numpy[v_id] = np.concatenate(sol_numpy[v_id])
@@ -256,6 +261,7 @@ def _BLOLayerFn(
             ctx.inequality_dual = inequality_dual
             ctx.params_numpy = params_numpy
             ctx.params = params
+            ctx.slack = ineq_slack_residual
             # sol = torch.cat(sol, dim=0)
 
             return tuple(sol)
@@ -271,6 +277,10 @@ def _BLOLayerFn(
             equality_dual = ctx.equality_dual
             inequality_dual = ctx.inequality_dual
             inequality_dual_tanh = [np.tanh(dual * temperature) for dual in inequality_dual]
+            slack = ctx.slack
+            y_dim = dvars_numpy[0].shape[1]
+            num_eq = equality_dual[0].shape[1]
+
             params_numpy = ctx.params_numpy
             params = ctx.params
             batch = ctx.batch
@@ -315,7 +325,17 @@ def _BLOLayerFn(
                     # key for bilevel algorithm: identify the active constraints and add them to the equality constraints
                     lam = inequality_dual[j][i]
                     inequality_dual_params[j].value = lam
-                    active_mask_params[j].value = (lam > dual_cutoff).astype(np.float64)
+                    active_mask_params[j].value = ((lam > dual_cutoff)).astype(np.float64)
+                    # print(f"num active constraints: {active_mask_params[j].value.sum()}")
+                    if active_mask_params[j].value.sum() > y_dim - num_eq:
+                        print(f"num active constraints: {active_mask_params[j].value.sum()}")
+
+                        k = int(y_dim - num_eq)
+                        idx = np.argpartition(lam, -k)[-k:]
+                        mask = np.zeros_like(lam, dtype=np.float64)
+                        mask[idx] = 1.0
+                        active_mask_params[j].value = mask
+                        # import pdb; pdb.set_trace()
 
                 for j, _ in enumerate(equality_functions):
                     equality_dual_params[j].value = equality_dual[j][i]
@@ -325,7 +345,7 @@ def _BLOLayerFn(
                     for j, v in enumerate(variables):
                         new_sol_lagrangian[j].append(v.value[np.newaxis,:])
                 except:
-                    import pdb; pdb.set_trace()
+                    # import pdb; pdb.set_trace()
                     print("GUROBI failed, using OSQP")
                     problem.solve(solver=cp.OSQP, eps_abs=1e-4, eps_rel=1e-4, warm_start=True, verbose=False)
                     for j, v in enumerate(variables):
