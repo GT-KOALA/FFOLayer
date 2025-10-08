@@ -74,9 +74,9 @@ def get_sudoku_matrix(n):
     '''
     X = np.array([[cp.Variable(n**2) for i in range(n**2)] for j in range(n**2)]) #(row, col, digit), row and column are square number
     cons = ([x >= 0 for row in X for x in row] + # one-hot (#row * #col * #digits constraints)
-            [cp.sum(x) == 1 for row in X for x in row] + # each cell contains exactly one digit (#row * #col)
-            [sum(row) == np.ones(n**2) for row in X] + # each row contains n**2 unique digits (#row * #digit)
-            [sum([row[i] for row in X]) == np.ones(n**2) for i in range(n**2)] + # each column contains n**2 unique digit (#col * #digit)
+            [cp.sum(x) == 1 for row in X for x in row] + # each cell contains exactly one digit (#row * #col), [1, 1, 1, 1, 0, 0, 0, 0...]
+            [sum(row) == np.ones(n**2) for row in X] + # each row contains n**2 unique digits (#row * #digit) [1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0., 0]
+            [sum([row[i] for row in X]) == np.ones(n**2) for i in range(n**2)] + # each column contains n**2 unique digit (#col * #digit) [[1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1.. 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1]
             [sum([sum(row[i:i+n]) for row in X[j:j+n]]) == np.ones(n**2) for i in range(0,n**2,n) for j in range(0, n**2, n)]) # n**2 unique digits in n x n blocks (n**2 * n**2 * n**2)
     f = sum([cp.sum(x) for row in X for x in row])
     prob = cp.Problem(cp.Minimize(f), cons)
@@ -89,6 +89,9 @@ def get_sudoku_matrix(n):
         if np.linalg.matrix_rank(A0+[A[i]], tol=1e-12) > rank:
             A0.append(A[i])
             rank += 1
+        # else:
+        #     print(i, A[i])
+
 
     return np.array(A0)
 
