@@ -168,7 +168,8 @@ class SingleOptLayerSudoku(nn.Module):
             problem, objective, ineq_functions, eq_functions, params, variables = setup_cvx_qp_problem(opt_var_dim=self.y_dim, num_ineq=self.num_ineq, num_eq=self.num_eq)
             
             if layer_type==FFOCP_EQ:
-                self.optlayer = BLOLayer(objective=objective, equality_functions=eq_functions, inequality_functions=ineq_functions, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol)
+                # self.optlayer = BLOLayer(objective=objective, equality_functions=eq_functions, inequality_functions=ineq_functions, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol)
+                self.optlayer = BLOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol)
             elif layer_type==CVXPY_LAYER:
                 self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
             elif layer_type==LPGD:

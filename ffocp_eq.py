@@ -6,12 +6,8 @@ import os
 import torch
 from cvxtorch import TorchExpression
 from cvxpylayers.torch import CvxpyLayer
-import sudoku.logger as logger
 import wandb
-import pathlib
-import json
-
-n_threads = os.cpu_count()
+from utils import to_numpy, to_torch, _dump_cvxpy, n_threads, slice_params_for_batch
 
 @torch.no_grad()
 def _compare_grads(params_req, grads, ground_truth_grads):
@@ -35,79 +31,70 @@ def _compare_grads(params_req, grads, ground_truth_grads):
     # rel_l2_diff = l2_diff / gt.norm().clamp_min(eps)
     return cos_sim, l2_diff
 
-def _np(x):
-    if isinstance(x, torch.Tensor):
-        return x.detach().cpu().numpy()
-    return np.array(x)
-
-def _dump_cvxpy(
-    save_dir, file_name, batch_i, *,
-    ctx,
-    param_order, variables,
-    alpha, dual_cutoff,
-    solver_used, trigger,
-    params_numpy,
-    sol_numpy,
-    equality_dual,
-    inequality_dual,
-    slack,
-    new_sol_lagrangian,
-    new_equality_dual,
-    new_active_dual,
-    active_mask_params,
-    dvars_numpy,
+# wrapper function for BLOLayer
+def BLOLayer(
+    problem: cp.Problem,
+    parameters,
+    variables,
+    alpha: float = 100.0,
+    dual_cutoff: float = 1e-3,
+    slack_tol: float = 1e-8,
+    compute_cos_sim: bool = False,
 ):
-    p = pathlib.Path(save_dir)
-    p.mkdir(parents=True, exist_ok=True)
+    """
+    Create an optimization layer that can be called like a CvxpyLayer:
+        layer = BLOLayer(...);  y = layer(*param_tensors)
 
-    meta = {
-        "tag": f"{file_name}",
-        "batch_i": int(batch_i),
-        "dtype": str(ctx.dtype),
-        "device": str(ctx.device),
-        "alpha": float(alpha),
-        "dual_cutoff": float(dual_cutoff),
-        "solver_used": solver_used,
-        "trigger": trigger,
-        "param_count": len(param_order),
-        "var_count": len(variables),
-        "eq_count": len(equality_dual),
-        "ineq_count": len(inequality_dual),
-    }
-    # (p / "meta.json").write_text(json.dumps(meta, indent=2))
+    Args:
+        problem:   cvxpy.Problem with objective + constraints
+        parameters: list[cp.Parameter]
+        variables:  list[cp.Variable]
+        alpha, dual_cutoff, slack_tol, compute_cos_sim: hyperparameters for BLOLayer
 
-    arrs = {}
+    Returns:
+        A module with forward(*params, solver_args={}) -> tuple[tensor,...]
+    """
 
-    for k in range(len(param_order)):
-        arrs[f"param_{k}"] = _np(params_numpy[k][batch_i if ctx.batch else 0])
+    # Extract objective expression (ensure minimization)
+    obj = problem.objective
+    if isinstance(obj, cp.Minimize):
+        objective_expr = obj.expr
+    elif isinstance(obj, cp.Maximize):
+        objective_expr = -obj.expr  # convert to minimize
+    else:
+        objective_expr = getattr(obj, "expr", None)
+        if objective_expr is None:
+            raise ValueError("Unsupported objective type; expected Minimize/Maximize.")
 
-    for j in range(len(variables)):
-        arrs[f"y_old_{j}"] = _np(sol_numpy[j][batch_i])
-    for l in range(len(equality_dual)):
-        arrs[f"dual_eq_old_{l}"] = _np(equality_dual[l][batch_i])
-    for m in range(len(inequality_dual)):
-        lam = inequality_dual[m][batch_i]
-        arrs[f"dual_ineq_old_{m}"] = _np(lam)
-        arrs[f"slack_old_{m}"]     = _np(slack[m][batch_i])
+    eq_funcs, ineq_funcs = [], []
+    for c in problem.constraints:
+        # Equality: g(x,θ) == 0  -> store g(x,θ)
+        if isinstance(c, cp.constraints.zero.Equality):
+            eq_funcs.append(c.expr)
 
-        try:
-            mask_val = active_mask_params[m].value
-        except Exception:
-            mask_val = (lam > dual_cutoff).astype(np.float64)
-        arrs[f"active_mask_used_{m}"] = _np(mask_val)
+        # Inequality: g(x,θ) <= 0 -> store g(x,θ)
+        elif isinstance(c, cp.constraints.nonpos.Inequality):
+            ineq_funcs.append(c.expr)
 
-    if dvars_numpy is not None:
-        for j in range(len(variables)):
-            dv = dvars_numpy[j]
-            if dv is None:
-                arrs[f"dvars_is_none_{j}"] = np.array([True])
-            else:
-                arrs[f"dvars_{j}"] = _np(dv[batch_i])
+        else:
+            # save for PSD or SOC constraints
+            raise NotImplementedError(
+                f"Constraint type {type(c)} not supported in BLOLayer wrapper."
+            )
 
-    np.savez_compressed(p / f"{file_name}.npz", **arrs)
+    return _BLOLayer(
+        objective=objective_expr,
+        equality_functions=eq_funcs,
+        inequality_functions=ineq_funcs,
+        parameters=parameters,
+        variables=variables,
+        alpha=alpha,
+        dual_cutoff=dual_cutoff,
+        slack_tol=slack_tol,
+        _compute_cos_sim=compute_cos_sim,
+    )
 
-
-class BLOLayer(torch.nn.Module):
+class _BLOLayer(torch.nn.Module):
     """A differentiable convex optimization layer
 
     A BLOLayer solves a parametrized convex optimization problem given by a
@@ -144,7 +131,7 @@ class BLOLayer(torch.nn.Module):
         ```
     """
 
-    def __init__(self, objective, equality_functions, inequality_functions, parameters, variables, alpha, dual_cutoff, slack_tol):
+    def __init__(self, objective, equality_functions, inequality_functions, parameters, variables, alpha, dual_cutoff, slack_tol, _compute_cos_sim=False):
         """Construct a BLOLayer
 
         Args:
@@ -160,7 +147,7 @@ class BLOLayer(torch.nn.Module):
                      Variables determines the order of the optimal variable
                      values returned from the forward pass.
         """
-        super(BLOLayer, self).__init__()
+        super(_BLOLayer, self).__init__()
         
         self.objective = objective
         self.equality_functions = equality_functions
@@ -170,6 +157,7 @@ class BLOLayer(torch.nn.Module):
         self.alpha = alpha
         self.dual_cutoff = dual_cutoff
         self.slack_tol = float(slack_tol) 
+        self._compute_cos_sim = _compute_cos_sim
 
     def forward(self, *params, solver_args={}):
         """Solve problem (or a batch of problems) corresponding to `params`
@@ -197,22 +185,12 @@ class BLOLayer(torch.nn.Module):
             alpha=self.alpha,
             dual_cutoff=self.dual_cutoff,
             slack_tol=self.slack_tol,
+            _compute_cos_sim=self._compute_cos_sim,
             info=info,
         )
         sol = f(*params)
         self.info = info
         return sol
-
-
-def to_numpy(x):
-    # convert torch tensor to numpy array
-    return x.cpu().detach().double().numpy()
-
-
-def to_torch(x, dtype, device):
-    # convert numpy array to torch tensor
-    return torch.from_numpy(x).type(dtype).to(device)
-
 
 def _BLOLayerFn(
         objective,
@@ -223,6 +201,7 @@ def _BLOLayerFn(
         alpha,
         dual_cutoff,
         slack_tol,
+        _compute_cos_sim,
         info):
     class _BLOLayerFnFn(torch.autograd.Function):
         @staticmethod
@@ -391,12 +370,8 @@ def _BLOLayerFn(
             batch = ctx.batch
             batch_size = ctx.batch_size
 
-            # compute ground truth gradient using cvxpylayer
             equality_constraints = [equality_function == 0 for equality_function in equality_functions]
             inequality_constraints = [inequality_function <= 0 for inequality_function in inequality_functions]
-            problem = cp.Problem(cp.Minimize(objective),
-                             constraints=equality_constraints + inequality_constraints)
-
             params_req, req_grad_mask = [], []
             for p in ctx.params:
                 q = p.detach().clone()
@@ -405,23 +380,28 @@ def _BLOLayerFn(
                 params_req.append(q)
                 req_grad_mask.append(req_grad)
 
-            _cvx_layer = CvxpyLayer(problem, parameters=param_order, variables=variables)
-            with torch.enable_grad():
-                sol_tensors = _cvx_layer(*params_req)
+            if _compute_cos_sim:
+                # compute ground truth gradient using cvxpylayer
+                cvxpylayer_problem = cp.Problem(cp.Minimize(objective),
+                            constraints=equality_constraints + inequality_constraints)
 
-            if not isinstance(sol_tensors, (tuple, list)):
-                sol_tensors = (sol_tensors,)
+                _cvx_layer = CvxpyLayer(cvxpylayer_problem, parameters=param_order, variables=variables)
+                with torch.enable_grad():
+                    sol_tensors = _cvx_layer(*params_req)
 
-            grad_outputs = [torch.zeros_like(out) if gv is None else gv for out, gv in zip(sol_tensors, dvars)]
-            inputs_for_grad = tuple(q for q, need in zip(params_req, req_grad_mask) if need)
+                if not isinstance(sol_tensors, (tuple, list)):
+                    sol_tensors = (sol_tensors,)
 
-            ground_truth_grads = torch.autograd.grad(
-                outputs=tuple(sol_tensors),
-                inputs=inputs_for_grad,
-                grad_outputs=tuple(grad_outputs),
-                allow_unused=True,
-                retain_graph=False
-            )
+                grad_outputs = [torch.zeros_like(out) if gv is None else gv for out, gv in zip(sol_tensors, dvars)]
+                inputs_for_grad = tuple(q for q, need in zip(params_req, req_grad_mask) if need)
+
+                ground_truth_grads = torch.autograd.grad(
+                    outputs=tuple(sol_tensors),
+                    inputs=inputs_for_grad,
+                    grad_outputs=tuple(grad_outputs),
+                    allow_unused=True,
+                    retain_graph=False
+                )
 
             dvar_params = [cp.Parameter(shape=v.shape) for v in variables]
             inequality_dual_params = [cp.Parameter(shape=v.shape) for v in inequality_functions]
@@ -468,20 +448,17 @@ def _BLOLayerFn(
                     # print(f"num active constraints: {active_mask_params[j].value.sum()}")
                     if active_mask_params[j].value.sum() > y_dim - num_eq:
                         print(f"num active constraints: {active_mask_params[j].value.sum()}")
-                        logger.log_scalar("num_active_constraints", active_mask_params[j].value.sum())
 
                         k = int(y_dim - num_eq)
                         idx = np.argpartition(lam, -k)[-k:]
                         mask = np.zeros_like(lam, dtype=np.float64)
                         mask[idx] = 1.0
                         active_mask_params[j].value = mask
-                        # import pdb; pdb.set_trace()
 
                 for j, _ in enumerate(equality_functions):
                     equality_dual_params[j].value = equality_dual[j][i]
 
                 problem.solve(solver=cp.GUROBI, **{"Threads": n_threads, "OutputFlag": 0, "FeasibilityTol": 1e-9})
-                # import pdb; pdb.set_trace()
 
                 st = problem.status
                 try:
@@ -512,7 +489,7 @@ def _BLOLayerFn(
                     active_mask = np.array([a.value for a in active_mask_params])
                     new_active_dual[c_id].append(c.dual_value[np.newaxis,:])
             
-            print('--- sol_diff mean: ', np.mean(np.array(sol_diffs)), 'max: ', np.max(np.array(sol_diffs)), 'min: ', np.min(np.array(sol_diffs)))
+            # print('--- sol_diff mean: ', np.mean(np.array(sol_diffs)), 'max: ', np.max(np.array(sol_diffs)), 'min: ', np.min(np.array(sol_diffs)))
             
             for c_id in range(len(equality_constraints)):
                 new_equality_dual[c_id] = np.concatenate(new_equality_dual[c_id])
@@ -525,7 +502,7 @@ def _BLOLayerFn(
 
             sol_dis = torch.linalg.norm(new_sol[0] - to_torch(sol[0], ctx.dtype, ctx.device))
 
-            print("solution distance: {:.6f}".format(sol_dis))
+            # print("solution distance: {:.6f}".format(sol_dis))
             if sol_dis > 0.01:
                 _dump_cvxpy(
                     save_dir='./cvxpy_logs',
@@ -558,14 +535,13 @@ def _BLOLayerFn(
                 + cp.sum([cp.sum(cp.multiply(du, f)) for du, f in zip(eq_dual_params, equality_functions)]) \
                 + cp.sum([cp.sum(cp.multiply(du, f)) for du, f in zip(ineq_dual_params, inequality_functions)])
 
+
+            torch.set_default_device(torch.device(ctx.device))
             phi_torch = TorchExpression(
                 phi_expr,
                 provided_vars_list=[*variables, *param_order, *eq_dual_params, *ineq_dual_params]
             ).torch_expression
 
-
-            # seems wrong
-            # params_req = [p.detach().clone().requires_grad_(True) if p.requires_grad else p.detach().clone()for p in params]
             params_req = []
             for p, need in zip(ctx.params, req_grad_mask):
                 q = p.detach().clone()
@@ -574,21 +550,6 @@ def _BLOLayerFn(
                     params_req.append(q)
                 else:
                     params_req.append(q)
-
-            def slice_params_for_batch(params_req, batch_sizes, i):
-                """Pick p[i] if that parameter was batched; else p."""
-                out = []
-                for p, bs in zip(params_req, ctx.batch_sizes):
-                    out.append(p[i] if bs > 0 else p)
-                return out
-
-            def make_mask_torch_for_i(i):
-                mask_list = []
-                for j in range(len(inequality_functions)):
-                    lam_ji = inequality_dual[j][i]
-                    mask_np = (lam_ji > dual_cutoff).astype(np.float64)
-                    mask_list.append(to_torch(mask_np, ctx.dtype, ctx.device))
-                return mask_list
 
             loss = 0.0
             with torch.enable_grad():
@@ -612,24 +573,25 @@ def _BLOLayerFn(
             loss.backward()
             grads = [p.grad for p in params_req]
 
-            with torch.no_grad():
-                total_l2 = torch.sqrt(sum(
-                    (g.detach().float() ** 2).sum()
-                    for g in grads if g is not None
-                ))
-                total_inf = max(
-                    (g.detach().float().abs().max() for g in grads if g is not None)
-                )
+            if _compute_cos_sim:
+                with torch.no_grad():
+                    total_l2 = torch.sqrt(sum(
+                        (g.detach().float() ** 2).sum()
+                        for g in grads if g is not None
+                    ))
+                    total_inf = max(
+                        (g.detach().float().abs().max() for g in grads if g is not None)
+                    )
 
-            cos_sim, l2_norm = _compare_grads(params_req, [p.grad for p in params_req if p.requires_grad], ground_truth_grads)
-            print(f"cos_sim = {cos_sim:.6f}")
-            wandb.log({
-                "solution_distance": sol_dis,
-                "grad_l2": total_l2,
-                "grad_inf": total_inf,
-                "cos_sim": cos_sim,
-                "l2_norm": l2_norm,
-            })
+                cos_sim, l2_norm = _compare_grads(params_req, [p.grad for p in params_req if p.requires_grad], ground_truth_grads)
+                print(f"cos_sim = {cos_sim:.6f}")
+                wandb.log({
+                    "solution_distance": sol_dis,
+                    "grad_l2": total_l2,
+                    "grad_inf": total_inf,
+                    "cos_sim": cos_sim,
+                    "l2_norm": l2_norm,
+                })
 
             return tuple(grads)
 
