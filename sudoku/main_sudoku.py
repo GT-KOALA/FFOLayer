@@ -11,6 +11,8 @@ from torch.utils.data import DataLoader, TensorDataset, Subset
 
 from models_sudoku import BLOSudokuLearnA, OptNetSudokuLearnA, SingleOptLayerSudoku
 from utils_sudoku import computeErr, create_logger
+import logger as logger
+import wandb
 
 def train_test_loop(args, experiment_dir, n):
     method = args.method
@@ -64,7 +66,7 @@ def train_test_loop(args, experiment_dir, n):
     ###############################################
     alpha = args.alpha
     dual_cutoff = args.dual_cutoff
-    model = SingleOptLayerSudoku(n, learnable_parts=['eq'], layer_type=method, Qpenalty=0.1, alpha=alpha, dual_cutoff=dual_cutoff)
+    model = SingleOptLayerSudoku(n, learnable_parts=['eq'], layer_type=method, Qpenalty=0.1, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=args.slack_tol)
     model = model.to(device)
     
     # if method==FFOCP_EQ:
@@ -75,7 +77,8 @@ def train_test_loop(args, experiment_dir, n):
     #     assert(1==0)
     
     directory = experiment_dir
-    filename = '{}_n{}_lr{}_seed{}.csv'.format(method, n, learning_rate, seed)
+    time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+    filename = '{}_n{}_lr{}_seed{}_{time_str}.csv'.format(method, n, learning_rate, seed, time_str=time_str)
     if os.path.exists(directory + filename):
         os.remove(directory + filename)
 
@@ -87,7 +90,9 @@ def train_test_loop(args, experiment_dir, n):
         file.write('epoch, train_loss, test_loss, forward_time, backward_time, train_error, test_error\n')
         file.flush()
         
-        writer = SummaryWriter(log_dir=f"runs/sudoku_n{n}_{method}_bs{batch_size}_lr{learning_rate}_seed{seed}")
+        writer = SummaryWriter(log_dir=f"runs/sudoku_n{n}_{method}_bs{batch_size}_lr{learning_rate}_seed{seed}_{time_str}")
+        logger.set_writer(writer, tag=f"BLO_{method}_{n}_{alpha}_{dual_cutoff}_{batch_size}_{learning_rate}_{seed}")
+
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0)
         loss_fn = torch.nn.MSELoss()
         
@@ -133,6 +138,9 @@ def train_test_loop(args, experiment_dir, n):
 
                 train_loss_list.append(loss.item())
                 print(f"train loss: {loss.item()}")
+                wandb.log({
+                    "train_loss": loss.item(),
+                })
 
             if epoch%1==0 or epoch==num_epochs-1:
                     torch.save(model.state_dict(), os.path.join(directory, f"model_epoch{epoch}.pt"))
@@ -156,6 +164,15 @@ def train_test_loop(args, experiment_dir, n):
             
             train_err = train_err/len(train_dataset)
             test_err = test_err/len(test_dataset)
+
+            wandb.log({
+                "avg_train_loss": train_loss,
+                "avg_test_loss": test_loss,
+                "train_error": train_err,
+                "test_error": test_err,
+                "total_forward_time": forward_time,
+                "total_backward_time": backward_time,
+            })
             
             avg_train_err.append(train_err)
             avg_test_err.append(test_err)
@@ -174,12 +191,6 @@ def train_test_loop(args, experiment_dir, n):
 
         writer.flush()
 
-    
-    
-    
-    
-    
-    
     
     # import matplotlib.pyplot as plt
 
@@ -209,6 +220,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--alpha', type=float, default=100, help='alpha')
     parser.add_argument('--dual_cutoff', type=float, default=1e-3, help='dual cutoff')
+    parser.add_argument('--slack_tol', type=float, default=1e-8, help='slack tolerance')
     
     args = parser.parse_args()
     
@@ -218,6 +230,12 @@ if __name__ == '__main__':
     
     n = args.n
     failure_id = '{}_n{}_lr{}_seed{}'.format(args.method, n, args.lr, args.seed)
+
+    wandb.login(key="9459f0100021f1abd3867bedcda1b47716e21a34")
+    time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+    if not os.path.exists(f"wandb/{args.method}"):
+        os.makedirs(f"wandb/{args.method}")
+    wandb.init(project=f"bilevel_layer_sudoku_{args.method}", name=f"sudoku_{time_str}", config=vars(args), dir=f"wandb/{args.method}")
     
     try:
         train_test_loop(args, experiment_dir, n=n)

@@ -5,8 +5,106 @@ import os
 
 import torch
 from cvxtorch import TorchExpression
+from cvxpylayers.torch import CvxpyLayer
+import sudoku.logger as logger
+import wandb
+import pathlib
+import json
 
 n_threads = os.cpu_count()
+
+@torch.no_grad()
+def _compare_grads(params_req, grads, ground_truth_grads):
+    est_chunks, gt_chunks = [], []
+    for p, ge, gg in zip(params_req, grads, ground_truth_grads):
+        ge = torch.zeros_like(p) if ge is None else ge.detach()
+        gg = torch.zeros_like(p) if gg is None else gg.detach()
+        est_chunks.append(ge.reshape(-1))
+        gt_chunks.append(gg.reshape(-1))
+
+    est = torch.cat(est_chunks)
+    gt  = torch.cat(gt_chunks)
+
+    eps = 1e-12
+
+    denom = (est.norm() * gt.norm()).clamp_min(eps)
+    cos_sim = torch.dot(est, gt) / denom
+
+    diff = (est - gt)
+    l2_diff = diff.norm()
+    # rel_l2_diff = l2_diff / gt.norm().clamp_min(eps)
+    return cos_sim, l2_diff
+
+def _np(x):
+    if isinstance(x, torch.Tensor):
+        return x.detach().cpu().numpy()
+    return np.array(x)
+
+def _dump_cvxpy(
+    save_dir, file_name, batch_i, *,
+    ctx,
+    param_order, variables,
+    alpha, dual_cutoff,
+    solver_used, trigger,
+    params_numpy,
+    sol_numpy,
+    equality_dual,
+    inequality_dual,
+    slack,
+    new_sol_lagrangian,
+    new_equality_dual,
+    new_active_dual,
+    active_mask_params,
+    dvars_numpy,
+):
+    p = pathlib.Path(save_dir)
+    p.mkdir(parents=True, exist_ok=True)
+
+    meta = {
+        "tag": f"{file_name}",
+        "batch_i": int(batch_i),
+        "dtype": str(ctx.dtype),
+        "device": str(ctx.device),
+        "alpha": float(alpha),
+        "dual_cutoff": float(dual_cutoff),
+        "solver_used": solver_used,
+        "trigger": trigger,
+        "param_count": len(param_order),
+        "var_count": len(variables),
+        "eq_count": len(equality_dual),
+        "ineq_count": len(inequality_dual),
+    }
+    # (p / "meta.json").write_text(json.dumps(meta, indent=2))
+
+    arrs = {}
+
+    for k in range(len(param_order)):
+        arrs[f"param_{k}"] = _np(params_numpy[k][batch_i if ctx.batch else 0])
+
+    for j in range(len(variables)):
+        arrs[f"y_old_{j}"] = _np(sol_numpy[j][batch_i])
+    for l in range(len(equality_dual)):
+        arrs[f"dual_eq_old_{l}"] = _np(equality_dual[l][batch_i])
+    for m in range(len(inequality_dual)):
+        lam = inequality_dual[m][batch_i]
+        arrs[f"dual_ineq_old_{m}"] = _np(lam)
+        arrs[f"slack_old_{m}"]     = _np(slack[m][batch_i])
+
+        try:
+            mask_val = active_mask_params[m].value
+        except Exception:
+            mask_val = (lam > dual_cutoff).astype(np.float64)
+        arrs[f"active_mask_used_{m}"] = _np(mask_val)
+
+    if dvars_numpy is not None:
+        for j in range(len(variables)):
+            dv = dvars_numpy[j]
+            if dv is None:
+                arrs[f"dvars_is_none_{j}"] = np.array([True])
+            else:
+                arrs[f"dvars_{j}"] = _np(dv[batch_i])
+
+    np.savez_compressed(p / f"{file_name}.npz", **arrs)
 
 
 class BLOLayer(torch.nn.Module):
@@ -46,7 +144,7 @@ class BLOLayer(torch.nn.Module):
         ```
     """
 
-    def __init__(self, objective, equality_functions, inequality_functions, parameters, variables, alpha, dual_cutoff):
+    def __init__(self, objective, equality_functions, inequality_functions, parameters, variables, alpha, dual_cutoff, slack_tol):
         """Construct a BLOLayer
 
         Args:
@@ -71,6 +169,7 @@ class BLOLayer(torch.nn.Module):
         self.variables = variables
         self.alpha = alpha
         self.dual_cutoff = dual_cutoff
+        self.slack_tol = float(slack_tol) 
 
     def forward(self, *params, solver_args={}):
         """Solve problem (or a batch of problems) corresponding to `params`
@@ -97,6 +196,7 @@ class BLOLayer(torch.nn.Module):
             variables=self.variables,
             alpha=self.alpha,
             dual_cutoff=self.dual_cutoff,
+            slack_tol=self.slack_tol,
             info=info,
         )
         sol = f(*params)
@@ -122,6 +222,7 @@ def _BLOLayerFn(
         variables,
         alpha,
         dual_cutoff,
+        slack_tol,
         info):
     class _BLOLayerFnFn(torch.autograd.Function):
         @staticmethod
@@ -237,15 +338,17 @@ def _BLOLayerFn(
                     sol_numpy[v_id].append(v.value[np.newaxis,:])
                     sol[v_id].append(to_torch(v.value, ctx.dtype, ctx.device).unsqueeze(0))
 
-                for c_id,c in enumerate(equality_constraints):
+                for c_id, c in enumerate(equality_constraints):
                     equality_dual[c_id].append(c.dual_value[np.newaxis,:])
 
-                for c_id,c in enumerate(inequality_constraints):
+                for c_id, c in enumerate(inequality_constraints):
                     inequality_dual[c_id].append(c.dual_value[np.newaxis,:])
 
                 for c_id, expr in enumerate(inequality_functions):
-                    val = expr.value
-                    ineq_slack_residual[c_id].append(val[np.newaxis,:])
+                    g_val = expr.value
+                    s_val = -g_val
+                    s_val = np.maximum(s_val, 0.0)
+                    ineq_slack_residual[c_id].append(s_val[np.newaxis,:])
 
             for v_id in range(len(variables)):
                 sol[v_id] = torch.cat(sol[v_id])
@@ -254,6 +357,8 @@ def _BLOLayerFn(
                 equality_dual[c_id] = np.concatenate(equality_dual[c_id])
             for c_id in range(len(inequality_constraints)):
                 inequality_dual[c_id] = np.concatenate(inequality_dual[c_id])
+            for c_id in range(len(inequality_functions)):
+                ineq_slack_residual[c_id] = np.concatenate(ineq_slack_residual[c_id])
 
             ctx.sol = sol
             ctx.sol_numpy = sol_numpy
@@ -286,7 +391,37 @@ def _BLOLayerFn(
             batch = ctx.batch
             batch_size = ctx.batch_size
 
+            # compute ground truth gradient using cvxpylayer
             equality_constraints = [equality_function == 0 for equality_function in equality_functions]
+            inequality_constraints = [inequality_function <= 0 for inequality_function in inequality_functions]
+            problem = cp.Problem(cp.Minimize(objective),
+                             constraints=equality_constraints + inequality_constraints)
+
+            params_req, req_grad_mask = [], []
+            for p in ctx.params:
+                q = p.detach().clone()
+                req_grad = bool(p.requires_grad)
+                q.requires_grad_(req_grad)
+                params_req.append(q)
+                req_grad_mask.append(req_grad)
+
+            _cvx_layer = CvxpyLayer(problem, parameters=param_order, variables=variables)
+            with torch.enable_grad():
+                sol_tensors = _cvx_layer(*params_req)
+
+            if not isinstance(sol_tensors, (tuple, list)):
+                sol_tensors = (sol_tensors,)
+
+            grad_outputs = [torch.zeros_like(out) if gv is None else gv for out, gv in zip(sol_tensors, dvars)]
+            inputs_for_grad = tuple(q for q, need in zip(params_req, req_grad_mask) if need)
+
+            ground_truth_grads = torch.autograd.grad(
+                outputs=tuple(sol_tensors),
+                inputs=inputs_for_grad,
+                grad_outputs=tuple(grad_outputs),
+                allow_unused=True,
+                retain_graph=False
+            )
 
             dvar_params = [cp.Parameter(shape=v.shape) for v in variables]
             inequality_dual_params = [cp.Parameter(shape=v.shape) for v in inequality_functions]
@@ -326,10 +461,14 @@ def _BLOLayerFn(
                     # key for bilevel algorithm: identify the active constraints and add them to the equality constraints
                     lam = inequality_dual[j][i]
                     inequality_dual_params[j].value = lam
-                    active_mask_params[j].value = ((lam > dual_cutoff)).astype(np.float64)
+                    
+                    # active_mask_params[j].value = ((lam > dual_cutoff)).astype(np.float64)
+                    active_mask_params[j].value = (slack[j][i] <= slack_tol).astype(np.float64)
+
                     # print(f"num active constraints: {active_mask_params[j].value.sum()}")
                     if active_mask_params[j].value.sum() > y_dim - num_eq:
                         print(f"num active constraints: {active_mask_params[j].value.sum()}")
+                        logger.log_scalar("num_active_constraints", active_mask_params[j].value.sum())
 
                         k = int(y_dim - num_eq)
                         idx = np.argpartition(lam, -k)[-k:]
@@ -341,8 +480,13 @@ def _BLOLayerFn(
                 for j, _ in enumerate(equality_functions):
                     equality_dual_params[j].value = equality_dual[j][i]
 
-                problem.solve(solver=cp.GUROBI, **{"Threads": n_threads, "OutputFlag": 0})
+                problem.solve(solver=cp.GUROBI, **{"Threads": n_threads, "OutputFlag": 0, "FeasibilityTol": 1e-9})
+                # import pdb; pdb.set_trace()
+
+                st = problem.status
                 try:
+                    if st not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
+                        raise RuntimeError(f"New bilevel problem status = {st}")
                     for j, v in enumerate(variables):
                         new_sol_lagrangian[j].append(v.value[np.newaxis,:])
                         sol_diff = np.linalg.norm(sol[j][i] - v.value)
@@ -378,14 +522,58 @@ def _BLOLayerFn(
             new_sol = [to_torch(np.concatenate(v), ctx.dtype, ctx.device) for v in new_sol_lagrangian]
             new_inequality_dual_torch = [to_torch(v, ctx.dtype, ctx.device) for v in new_active_dual]
             new_equality_dual_torch = [to_torch(v, ctx.dtype, ctx.device) for v in new_equality_dual]
-    
-            g_tilde_expr = objective + eq_dual_product + ineq_dual_product
-            g_tilde_torch = TorchExpression(
-                g_tilde_expr,
-                provided_vars_list=[*variables, *param_order, *equality_dual_params, *inequality_dual_params]
+
+            sol_dis = torch.linalg.norm(new_sol[0] - to_torch(sol[0], ctx.dtype, ctx.device))
+
+            print("solution distance: {:.6f}".format(sol_dis))
+            if sol_dis > 0.01:
+                _dump_cvxpy(
+                    save_dir='./cvxpy_logs',
+                    file_name=f'ffocp_eq_{i}',
+                    batch_i=i,
+                    ctx=ctx,
+                    param_order=param_order,
+                    variables=variables,
+                    alpha=alpha,
+                    dual_cutoff=dual_cutoff,
+                    solver_used='gurobi',
+                    trigger='',
+                    params_numpy=params_numpy,
+                    sol_numpy=new_sol_lagrangian,
+                    equality_dual=equality_dual,
+                    inequality_dual=inequality_dual,
+                    slack=slack,
+                    new_sol_lagrangian=new_sol_lagrangian,
+                    new_equality_dual=new_equality_dual,
+                    new_active_dual=new_active_dual,
+                    active_mask_params=active_mask_params,
+                    dvars_numpy=dvars_numpy,
+                )
+                import pdb; pdb.set_trace()
+
+            ineq_dual_params = [cp.Parameter(shape=f.shape) for f in inequality_functions]
+            eq_dual_params   = [cp.Parameter(shape=f.shape) for f in equality_functions]
+
+            phi_expr = objective \
+                + cp.sum([cp.sum(cp.multiply(du, f)) for du, f in zip(eq_dual_params, equality_functions)]) \
+                + cp.sum([cp.sum(cp.multiply(du, f)) for du, f in zip(ineq_dual_params, inequality_functions)])
+
+            phi_torch = TorchExpression(
+                phi_expr,
+                provided_vars_list=[*variables, *param_order, *eq_dual_params, *ineq_dual_params]
             ).torch_expression
 
-            params_req = [p.detach().clone().requires_grad_(True) if p.requires_grad else p.detach().clone()for p in params]
+
+            # seems wrong
+            # params_req = [p.detach().clone().requires_grad_(True) if p.requires_grad else p.detach().clone()for p in params]
+            params_req = []
+            for p, need in zip(ctx.params, req_grad_mask):
+                q = p.detach().clone()
+                if need:
+                    q.requires_grad_(True)
+                    params_req.append(q)
+                else:
+                    params_req.append(q)
 
             def slice_params_for_batch(params_req, batch_sizes, i):
                 """Pick p[i] if that parameter was batched; else p."""
@@ -410,20 +598,39 @@ def _BLOLayerFn(
                     
                     params_i = slice_params_for_batch(params_req, ctx.batch_sizes, i)
 
-                    new_eq_dual_i   = [d[i] for d in new_equality_dual_torch]
+                    new_eq_dual_i = [d[i] for d in new_equality_dual_torch]
                     new_ineq_dual_i = [d[i] for d in new_inequality_dual_torch]
-                    old_eq_dual_i   = [to_torch(d[i], ctx.dtype, ctx.device) for d in equality_dual]
+                    old_eq_dual_i = [to_torch(d[i], ctx.dtype, ctx.device) for d in equality_dual]
                     old_ineq_dual_i = [to_torch(d[i], ctx.dtype, ctx.device) for d in inequality_dual]
 
-                    new_val_i = g_tilde_torch(*vars_new_i, *params_i, *new_eq_dual_i, *new_ineq_dual_i)
-                    old_val_i = g_tilde_torch(*vars_old_i, *params_i, *old_eq_dual_i, *old_ineq_dual_i)
-                    loss +=  new_val_i - old_val_i
+                    phi_new_i = phi_torch(*vars_new_i, *params_i, *new_eq_dual_i, *new_ineq_dual_i)
+                    phi_old_i = phi_torch(*vars_old_i, *params_i, *old_eq_dual_i, *old_ineq_dual_i)
+                    loss +=  phi_new_i - phi_old_i
 
                 loss = alpha * loss
 
             loss.backward()
             grads = [p.grad for p in params_req]
-   
+
+            with torch.no_grad():
+                total_l2 = torch.sqrt(sum(
+                    (g.detach().float() ** 2).sum()
+                    for g in grads if g is not None
+                ))
+                total_inf = max(
+                    (g.detach().float().abs().max() for g in grads if g is not None)
+                )
+
+            cos_sim, l2_norm = _compare_grads(params_req, [p.grad for p in params_req if p.requires_grad], ground_truth_grads)
+            print(f"cos_sim = {cos_sim:.6f}")
+            wandb.log({
+                "solution_distance": sol_dis,
+                "grad_l2": total_l2,
+                "grad_inf": total_inf,
+                "cos_sim": cos_sim,
+                "l2_norm": l2_norm,
+            })
+
             return tuple(grads)
 
     return _BLOLayerFnFn.apply

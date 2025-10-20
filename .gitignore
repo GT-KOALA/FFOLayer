@@ -10,4 +10,3 @@ output/*
 **/results_*/*
 **/sudoku_results_*/*
 *copy*
-*.pyc
