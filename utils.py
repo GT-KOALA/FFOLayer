@@ -7,10 +7,41 @@ import cvxpy as cp
 import tracemalloc
 import os
 import linecache
+import torch
 from scipy.linalg import block_diag
+import pathlib
 
 n_threads = os.cpu_count()
 
+def _np(x):
+    if isinstance(x, torch.Tensor):
+        return x.detach().cpu().numpy()
+    return np.array(x)
+
+def to_numpy(x):
+    # convert torch tensor to numpy array
+    return x.cpu().detach().double().numpy()
+
+
+def to_torch(x, dtype, device):
+    # convert numpy array to torch tensor
+    return torch.from_numpy(x).type(dtype).to(device)
+
+def slice_params_for_batch(params_req, batch_sizes, i):
+    """Pick p[i] if that parameter was batched; else p."""
+    out = []
+    for p, bs in zip(params_req, batch_sizes):
+        out.append(p[i] if bs > 0 else p)
+    return out
+
+def make_mask_torch_for_i(i, inequality_dual, inequality_functions, dual_cutoff, ctx):
+    mask_list = []
+    for j in range(len(inequality_functions)):
+        lam_ji = inequality_dual[j][i]
+        mask_np = (lam_ji > dual_cutoff).astype(np.float64)
+        mask_list.append(to_torch(mask_np, ctx.dtype, ctx.device))
+    return mask_list
+    
 def extract_nBatch(Q, p, G, h, A, b):
     dims = [3, 2, 3, 2, 3, 2]
     params = [Q, p, G, h, A, b]
@@ -245,3 +276,69 @@ def display_top(snapshot, key_type='lineno', limit=3):
     total = sum(stat.size for stat in top_stats)
     print("Total allocated size: %.1f KiB" % (total / 1024))
 
+
+def _dump_cvxpy(
+    save_dir, file_name, batch_i, *,
+    ctx,
+    param_order, variables,
+    alpha, dual_cutoff,
+    solver_used, trigger,
+    params_numpy,
+    sol_numpy,
+    equality_dual,
+    inequality_dual,
+    slack,
+    new_sol_lagrangian,
+    new_equality_dual,
+    new_active_dual,
+    active_mask_params,
+    dvars_numpy,
+):
+    p = pathlib.Path(save_dir)
+    p.mkdir(parents=True, exist_ok=True)
+
+    meta = {
+        "tag": f"{file_name}",
+        "batch_i": int(batch_i),
+        "dtype": str(ctx.dtype),
+        "device": str(ctx.device),
+        "alpha": float(alpha),
+        "dual_cutoff": float(dual_cutoff),
+        "solver_used": solver_used,
+        "trigger": trigger,
+        "param_count": len(param_order),
+        "var_count": len(variables),
+        "eq_count": len(equality_dual),
+        "ineq_count": len(inequality_dual),
+    }
+    # (p / "meta.json").write_text(json.dumps(meta, indent=2))
+
+    arrs = {}
+
+    for k in range(len(param_order)):
+        arrs[f"param_{k}"] = _np(params_numpy[k][batch_i if ctx.batch else 0])
+
+    for j in range(len(variables)):
+        arrs[f"y_old_{j}"] = _np(sol_numpy[j][batch_i])
+    for l in range(len(equality_dual)):
+        arrs[f"dual_eq_old_{l}"] = _np(equality_dual[l][batch_i])
+    for m in range(len(inequality_dual)):
+        lam = inequality_dual[m][batch_i]
+        arrs[f"dual_ineq_old_{m}"] = _np(lam)
+        arrs[f"slack_old_{m}"]     = _np(slack[m][batch_i])
+
+        try:
+            mask_val = active_mask_params[m].value
+        except Exception:
+            mask_val = (lam > dual_cutoff).astype(np.float64)
+        arrs[f"active_mask_used_{m}"] = _np(mask_val)
+
+    if dvars_numpy is not None:
+        for j in range(len(variables)):
+            dv = dvars_numpy[j]
+            if dv is None:
+                arrs[f"dvars_is_none_{j}"] = np.array([True])
+            else:
+                arrs[f"dvars_{j}"] = _np(dv[batch_i])
+
+    np.savez_compressed(p / f"{file_name}.npz", **arrs)
