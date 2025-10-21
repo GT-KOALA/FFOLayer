@@ -113,6 +113,7 @@ def train_test_loop(args, experiment_dir, n):
         avg_train_err = []
         avg_test_err = []
         
+        total_time = 0.0
         for epoch in range(start_epoch, start_epoch+num_epochs):
             print(f"##### epoch {epoch}: ")
             train_loss_list, test_loss_list = [], []
@@ -124,11 +125,15 @@ def train_test_loop(args, experiment_dir, n):
             model.train()
             for i, (x, y) in enumerate(train_loader):
                 # i = 37
-                if i%10==0:
-                    print(f"\t\t train example: {i}/{len(train_loader)}")
+                if (i + 1) % 10 == 0:
+                    print(f"\t\t train example: {i + 1}/{len(train_loader)}, total time: {total_time}")
+                    wandb.log({
+                        "total_time": total_time,
+                    })
                 x = x.to(device)
                 y = y.to(device)
-                iter_start_time = time.time()
+
+                batch_start_time = time.time()
                 
                 start_time = time.time()
                 pred = model(x)
@@ -136,13 +141,13 @@ def train_test_loop(args, experiment_dir, n):
                 # print(f"pred : {decode_onehot(pred[0])}")
                 loss = loss_fn(pred, y)
                 
-                forward_time += time.time() - start_time
-                iter_time = time.time() - iter_start_time
-
                 start_time = time.time()
                 loss.backward()
                 backward_time += time.time() - start_time
-                
+
+                batch_time = time.time() - batch_start_time
+                total_time += batch_time
+
                 with torch.no_grad():
                     train_err += computeErr(pred)
                 
@@ -194,9 +199,10 @@ def train_test_loop(args, experiment_dir, n):
                 optimizer.zero_grad()
 
                 train_loss_list.append(loss.item())
-                print(f"train loss: {loss.item()}, iter time: {iter_time}")
+                print(f"train loss: {loss.item()}, batch time: {batch_time}")
                 wandb.log({
                     "train_loss": loss.item(),
+                    "batch_time": batch_time,
                 })
 
             if epoch%1==0 or epoch==num_epochs-1:

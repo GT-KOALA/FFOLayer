@@ -508,8 +508,8 @@ def _BLOLayerFn(
                     params_req.append(q)
                 else:
                     params_req.append(q)
-
-            torch.set_default_device(torch.device(ctx.device))
+            if ctx.device != torch.device('cpu'):
+                torch.set_default_device(torch.device(ctx.device))
             loss = 0.0
             with torch.enable_grad():
                 for i in range(B):
