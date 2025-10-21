@@ -342,6 +342,11 @@ def _BLOLayerFn(
             ctx.slack = ineq_slack_residual
             ctx.blolayer = blolayer
 
+            ctx._warm_vars = [v.value.copy() for v in blolayer.variables]
+            ctx._warm_eq_duals = [c.dual_value.copy() for c in blolayer.eq_constraints]
+            ctx._warm_ineq_duals = [c.dual_value.copy() for c in blolayer.ineq_constraints]
+            ctx._warm_ineq_slack_residuals = [c.value.copy() for c in blolayer.ineq_functions]
+
             sol_torch = [to_torch(arr, ctx.dtype, ctx.device) for arr in sol_numpy]
 
             return tuple(sol_torch)
@@ -407,8 +412,10 @@ def _BLOLayerFn(
                 for j, _ in enumerate(blolayer.param_order):
                     blolayer.param_order[j].value = params_numpy[j][i]
 
-                for j, _ in enumerate(blolayer.variables):
+                for j, v in enumerate(blolayer.variables):
                     blolayer.dvar_params[j].value = dvars_numpy[j][i]
+                    # ZIHAO ADDED
+                    v.value = ctx._warm_vars[j]
 
                 for j, _ in enumerate(blolayer.ineq_functions):
                     # key for bilevel algorithm: identify the active constraints and add them to the equality constraints
@@ -441,16 +448,13 @@ def _BLOLayerFn(
                     for j, v in enumerate(blolayer.variables):
                         new_sol_lagrangian[j][i, ...] = v.value
                         sol_diff = np.linalg.norm(sol_numpy[j][i] - v.value)
-                        # print("old sol vs new sol norm diff: ", sol_diff)
                         sol_diffs.append(sol_diff)
                 except:
-                    # import pdb; pdb.set_trace()
                     print("GUROBI failed, using OSQP")
                     blolayer.perturbed_problem.solve(solver=cp.OSQP, eps_abs=1e-4, eps_rel=1e-4, warm_start=True, verbose=False)
                     for j, v in enumerate(blolayer.variables):
                         new_sol_lagrangian[j][i, ...] = v.value
                         sol_diff = np.linalg.norm(sol_numpy[j][i] - v.value)
-                        # print("old sol vs new sol norm diff: ", sol_diff)
                         sol_diffs.append(sol_diff)
                 
                 for c_id, c in enumerate(blolayer.eq_constraints):
@@ -469,33 +473,32 @@ def _BLOLayerFn(
             new_ineq_dual_torch = [to_torch(v, ctx.dtype, ctx.device) for v in new_active_dual]
             new_eq_dual_torch = [to_torch(v, ctx.dtype, ctx.device) for v in new_eq_dual]
 
-            sol_dis = torch.linalg.norm(to_torch(new_sol_lagrangian[0], ctx.dtype, ctx.device) - to_torch(sol_numpy[0], ctx.dtype, ctx.device))
-
+            # sol_dis = torch.linalg.norm(to_torch(new_sol_lagrangian[0], ctx.dtype, ctx.device) - to_torch(sol_numpy[0], ctx.dtype, ctx.device))
             # print("solution distance: {:.6f}".format(sol_dis))
-            if sol_dis > 0.01:
-                _dump_cvxpy(
-                    save_dir='./cvxpy_logs',
-                    file_name=f'ffocp_eq_{i}',
-                    batch_i=i,
-                    ctx=ctx,
-                    param_order=blolayer.param_order,
-                    variables=blolayer.variables,
-                    alpha=blolayer.alpha,
-                    dual_cutoff=blolayer.dual_cutoff,
-                    solver_used='gurobi',
-                    trigger='',
-                    params_numpy=params_numpy,
-                    sol_numpy=new_sol_lagrangian,
-                    eq_dual=new_eq_dual,
-                    ineq_dual=new_active_dual,
-                    slack=slack,
-                    new_sol_lagrangian=new_sol_lagrangian,
-                    new_eq_dual=new_eq_dual,
-                    new_active_dual=new_active_dual,
-                    active_mask_params=blolayer.active_mask_params,
-                    dvars_numpy=dvars_numpy,
-                )
-                import pdb; pdb.set_trace()
+            # if sol_dis > 0.01:
+            #     _dump_cvxpy(
+            #         save_dir='./cvxpy_logs',
+            #         file_name=f'ffocp_eq_{i}',
+            #         batch_i=i,
+            #         ctx=ctx,
+            #         param_order=blolayer.param_order,
+            #         variables=blolayer.variables,
+            #         alpha=blolayer.alpha,
+            #         dual_cutoff=blolayer.dual_cutoff,
+            #         solver_used='gurobi',
+            #         trigger='',
+            #         params_numpy=params_numpy,
+            #         sol_numpy=new_sol_lagrangian,
+            #         eq_dual=new_eq_dual,
+            #         ineq_dual=new_active_dual,
+            #         slack=slack,
+            #         new_sol_lagrangian=new_sol_lagrangian,
+            #         new_eq_dual=new_eq_dual,
+            #         new_active_dual=new_active_dual,
+            #         active_mask_params=blolayer.active_mask_params,
+            #         dvars_numpy=dvars_numpy,
+            #     )
+            #     import pdb; pdb.set_trace()
 
             params_req = []
             for p, need in zip(ctx.params, req_grad_mask):
@@ -542,7 +545,7 @@ def _BLOLayerFn(
                 cos_sim, l2_norm = _compare_grads(params_req, [p.grad for p in params_req if p.requires_grad], ground_truth_grads)
                 print(f"cos_sim = {cos_sim:.6f}")
                 wandb.log({
-                    "solution_distance": sol_dis,
+                    # "solution_distance": sol_dis,
                     "grad_l2": total_l2,
                     "grad_inf": total_inf,
                     "cos_sim": cos_sim,
