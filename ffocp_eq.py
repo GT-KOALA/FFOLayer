@@ -316,7 +316,11 @@ def _BLOLayerFn(
                 for p, q in zip(params_numpy_i, blolayer.param_order):
                     q.value = p
 
-                blolayer.problem.solve(solver=cp.GUROBI, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0})
+                try:
+                    blolayer.problem.solve(solver=cp.GUROBI, warm_start=True,  **{"Threads": n_threads, "OutputFlag": 0})
+                except:
+                    print("GUROBI failed, using OSQP")
+                    blolayer.problem.solve(solver=cp.OSQP, warm_start=True, verbose=False)
                 
                 # convert to torch tensors and incorporate info_forward
                 for v_id, v in enumerate(blolayer.variables):
@@ -418,7 +422,7 @@ def _BLOLayerFn(
                 for j, v in enumerate(blolayer.variables):
                     blolayer.dvar_params[j].value = dvars_numpy[j][i]
                     # ZIHAO ADDED
-                    v.value = ctx._warm_vars[j]
+                    # v.value = ctx._warm_vars[j]
 
                 for j, _ in enumerate(blolayer.ineq_functions):
                     # key for bilevel algorithm: identify the active constraints and add them to the equality constraints
@@ -426,7 +430,7 @@ def _BLOLayerFn(
                     blolayer.ineq_dual_params[j].value = lam
                     
                     # active_mask_params[j].value = ((lam > dual_cutoff)).astype(np.float64)
-                    _requires_active = (lam > blolayer.dual_cutoff).astype(np.float64)
+                    _requires_active = (slack[j][i] <= blolayer.slack_tol).astype(np.float64)
                     blolayer.active_mask_params[j].value = _requires_active
 
                     # print(f"num active constraints: {active_mask_params[j].value.sum()}")

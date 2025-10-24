@@ -13,7 +13,7 @@ from pandas.tseries.holiday import USFederalHolidayCalendar
 
 import torch
 
-import model_classes, nets
+import model_classes, nets, model_classes_ori_form
 from constants import *
 import wandb
 
@@ -105,9 +105,19 @@ def main():
                 'X_test_': X_test_, 'Y_test_': Y_test_}
 
         # Run and eval task-minimizing net, building off rmse net results.
-        model_task = model_classes.Net(X_train2[:,:-1], Y_train2, [200, 200]).to(DEVICE)
-        solver = model_classes.SolveScheduling(params, task=args.task, device=args.cuda_device, args=args) # could be qpth, cvxpylayer, cvxpylayer_lpgd, ffocp
-        
+        # model_task = model_classes.Net(X_train2[:,:-1], Y_train2, [200, 200]).to(DEVICE)
+        # solver = model_classes.SolveScheduling(params, task=args.task, device=args.cuda_device, args=args) # could be qpth, cvxpylayer, cvxpylayer_lpgd, ffocp
+        model_task = model_classes_ori_form.Net(X_train2[:,:-1], Y_train2, [200, 200]).to(DEVICE)
+        solver = model_classes_ori_form.SolveScheduling(params, layer_type=args.task, mc_samples=25) # could be qpth, cvxpylayer, cvxpylayer_lpgd, ffocp
+
+        model_task = model_task.to(DEVICE)
+        # first -- pretrain using rmse loss
+        model_task = nets.run_rmse_net(
+            model_task, variables_task, X_train2, Y_train2)
+        # second -- dfl training using task loss
+        model_task = nets.run_task_net(
+            model_task, solver, variables_task, params, X_train2, Y_train2, args)
+
         model_task = model_task.to(DEVICE)
         # first -- pretrain using rmse loss
         model_task = nets.run_rmse_net(

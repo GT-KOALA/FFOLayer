@@ -198,7 +198,8 @@ class SingleOptLayerSudoku(nn.Module):
         
         if self.eq_learnable:
             # b = get_feasible_b(self.A, torch.exp(torch.clamp(self.z0_a, -1, 1))) #torch.matmul(self.A, self.z0_a)
-            b = get_feasible_b(self.A, torch.clamp(torch.exp(self.z0_a), 0, 1)) #torch.matmul(self.A, self.z0_a)\
+            # b = get_feasible_b(self.A, torch.clamp(torch.exp(self.z0_a), 0, 1)) #torch.matmul(self.A, self.z0_a)
+            b = get_feasible_b(self.A, self.z0_a.exp())
             # b = get_feasible_b(self.A, torch.clamp(self.z0_a, 0, 1)) #torch.matmul(self.A, self.z0_a)
         else:
             b = self.b
@@ -228,7 +229,9 @@ class SingleOptLayerSudoku(nn.Module):
             params_batched = [Q_batched, p, G_batched, h_batched, A_batched, b_batched]
             
             if self.layer_type==LPGD:
-                sol, = self.optlayer(*params_batched) #, solver_args={"eps": 1e-8, "max_iters": 10000, "acceleration_lookback": 0}
+                # ZIHAO CHANGE: set eps to 1e-12
+                # sol, = self.optlayer(*params_batched, solver_args={"eps": 1e-12}) #, solver_args={"eps": 1e-8, "max_iters": 10000, "acceleration_lookback": 0}
+                sol, = self.optlayer(*params_batched)
             else:
                 sol, = self.optlayer(*params_batched)
             

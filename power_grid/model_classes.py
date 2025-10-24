@@ -188,7 +188,8 @@ class SolveSchedulingCvxpyLayer(nn.Module):
 
         on_gpu = (d.device.type == 'cuda')
         # "eps": 1e-10, 'max_iters': 100000
-        z_star, = self.layer(d, p, solver_args={"eps": 1e-10, "max_iters": 100000}) # why set eps to 1e-10 is better than 1e-12?
+        # z_star, = self.layer(d, p, solver_args={"eps": 1e-10, "max_iters": 100000}) # why set eps to 1e-10 is better than 1e-12?
+        z_star, = self.layer(d, p, solver_args={"eps": 1e-12})
         # out = QPFunction(verbose=False, solver=qpth.qp.QPSolvers.PDIPM_BATCHED)(Q, p, G, h, self.e, self.e)
         # print("diff = ", (z_star - out).norm().item())
         if on_gpu:

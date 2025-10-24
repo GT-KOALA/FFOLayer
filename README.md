@@ -62,11 +62,11 @@ We found that ffoqp's gradient approximation is more accurate than LPGD in this 
 
 To run the code, please use:
 ```
-python sudoku/main_sudoku.py --method=ffocp_eq
-python sudoku/main_sudoku.py --method=lpgd
-python sudoku/main_sudoku.py --method=ffoqp
-python sudoku/main_sudoku.py --method=cvxpylayer
-python sudoku/main_sudoku.py --method=qpth
+python sudoku/main_sudoku.py --method ffocp --n 3 --epoch 1 --batch_size 8
+python sudoku/main_sudoku.py --method lpgd --n 3 --epoch 1 --batch_size 8
+python sudoku/main_sudoku.py --method ffoqp --n 3 --epoch 1 --batch_size 8
+python sudoku/main_sudoku.py --method cvxpylayer --n 3 --epoch 1 --batch_size 8
+python sudoku/main_sudoku.py --method qpth --n 3 --epoch 1 --batch_size 8
 ```
 
 To plot the results, please use
