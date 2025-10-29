@@ -230,8 +230,8 @@ class SingleOptLayerSudoku(nn.Module):
             
             if self.layer_type==LPGD:
                 # ZIHAO CHANGE: set eps to 1e-12
-                # sol, = self.optlayer(*params_batched, solver_args={"eps": 1e-12}) #, solver_args={"eps": 1e-8, "max_iters": 10000, "acceleration_lookback": 0}
-                sol, = self.optlayer(*params_batched)
+                sol, = self.optlayer(*params_batched, solver_args={"eps": 1e-12}) #, solver_args={"eps": 1e-8, "max_iters": 10000, "acceleration_lookback": 0}
+                # sol, = self.optlayer(*params_batched)
             else:
                 sol, = self.optlayer(*params_batched)
             

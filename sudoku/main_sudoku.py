@@ -10,7 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, TensorDataset, Subset
 
 from models_sudoku import BLOSudokuLearnA, OptNetSudokuLearnA, SingleOptLayerSudoku
-from utils_sudoku import computeErr, create_logger
+from utils_sudoku import computeErr, create_logger, decode_onehot
 import logger as logger
 import wandb
 
@@ -24,7 +24,7 @@ def train_test_loop(args, experiment_dir, n):
     board_side_len = n**2
     
     # device = torch.device('cpu') #torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    device = torch.device(f'cuda:{args.cuda_device}' if torch.cuda.is_available() else 'cpu')
+    device = torch.device(args.device) if torch.cuda.is_available() else torch.device('cpu')
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
@@ -35,46 +35,44 @@ def train_test_loop(args, experiment_dir, n):
     train_data_dir_path = f"sudoku/data/{n}"
     features = torch.load(os.path.join(train_data_dir_path, "features.pt"))
     labels = torch.load(os.path.join(train_data_dir_path, "labels.pt"))
-    features = torch.tensor(features, dtype=torch.float32).to(device)[:]
-    labels   = torch.tensor(labels, dtype=torch.float32).to(device)[:]
+    m = 15
+    features = torch.tensor(features, dtype=torch.float32).to(device)[:]#[m:m+1]
+    labels   = torch.tensor(labels, dtype=torch.float32).to(device)[:]#[m:m+1]
     print(features.shape)
     print(labels.shape)
-    #assert(1==0)
+    # print(f"15th puzzle: ")
+    # print(decode_onehot(features[0]))
     
     # Create TensorDataset
     dataset = TensorDataset(features, labels)   
     
    # Fixed split indices
     num_samples = len(dataset)
-    train_split = 0.9
+    train_split = 0.9 #1
     train_size = int(num_samples * train_split)
     test_size = num_samples - train_size
 
     # Use first 80% for training, last 20% for testing
     train_indices = list(range(0, train_size))
-    test_indices = list(range(train_size, num_samples))
-
     train_dataset = Subset(dataset, train_indices)
-    test_dataset  = Subset(dataset, test_indices)
-
-    # DataLoaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    
+    test_indices = list(range(train_size, num_samples))
+    test_dataset  = Subset(dataset, test_indices)
     test_loader  = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    # test_dataset = train_dataset
+    # test_loader = train_loader
 
     print(f"Training samples: {len(train_dataset)}, Test samples: {len(test_dataset)}")
     
     ###############################################
     alpha = args.alpha
     dual_cutoff = args.dual_cutoff
-    model = SingleOptLayerSudoku(n, learnable_parts=['eq'], layer_type=method, Qpenalty=0.1, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=args.slack_tol)
+    Qpenalty = 0.1
+    model = SingleOptLayerSudoku(n, learnable_parts=['eq'], layer_type=method, Qpenalty=Qpenalty, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=args.slack_tol)
     model = model.to(device)
     
-    # if method==FFOCP_EQ:
-    #     model = BLOSudokuLearnA(n, Qpenalty, alpha=100).to(device)
-    # elif method==QPTH:
-    #     model = OptNetSudokuLearnA(n, Qpenalty).to(device)
-    # else:
-    #     assert(1==0)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0)
     
     directory = experiment_dir
     time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime())
@@ -84,16 +82,30 @@ def train_test_loop(args, experiment_dir, n):
 
     if not os.path.exists(directory):
         os.makedirs(directory)
+        
+    start_epoch = 0
 
-    # file = open(directory + filename, 'w')
-    with open(directory + filename, 'w') as file:
-        file.write('epoch, train_loss, test_loss, forward_time, backward_time, train_error, test_error\n')
-        file.flush()
+    if args.resume_epoch != None:
+        print(f"RESUMING TRAINING from epoch {args.resume_epoch}")
+        start_epoch = args.resume_epoch
+        checkpoint = torch.load(os.path.join(directory, f"checkpoint_epoch{start_epoch}.pt"))
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        start_epoch+=1
+        
+    if start_epoch==0:
+        mode = 'w'
+    else:
+        mode = 'a'
+
+    with open(directory + filename, mode) as file:
+        if start_epoch==0:
+            file.write('epoch, train_loss, test_loss, forward_time, backward_time, train_error, test_error\n')
+            file.flush()
         
         writer = SummaryWriter(log_dir=f"runs/sudoku_n{n}_{method}_bs{batch_size}_lr{learning_rate}_seed{seed}_{time_str}")
         logger.set_writer(writer, tag=f"BLO_{method}_{n}_{alpha}_{dual_cutoff}_{batch_size}_{learning_rate}_{seed}")
-
-        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0)
+        # optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0)
         loss_fn = torch.nn.MSELoss()
         
         avg_train_loss = [] # avg training loss per epoch
@@ -101,7 +113,7 @@ def train_test_loop(args, experiment_dir, n):
         avg_train_err = []
         avg_test_err = []
         
-        for epoch in range(num_epochs):
+        for epoch in range(start_epoch, start_epoch+num_epochs):
             print(f"##### epoch {epoch}: ")
             train_loss_list, test_loss_list = [], []
             train_err, test_err = 0,0
@@ -120,20 +132,64 @@ def train_test_loop(args, experiment_dir, n):
                 
                 start_time = time.time()
                 pred = model(x)
+                # print(f"pred abs max: {torch.max(torch.abs(pred))}, pred abs min:{torch.min(torch.abs(pred))}")
+                # print(f"pred : {decode_onehot(pred[0])}")
                 loss = loss_fn(pred, y)
                 
                 forward_time += time.time() - start_time
-                iter_time = time.time() - iter_start_time
 
                 start_time = time.time()
                 loss.backward()
                 backward_time += time.time() - start_time
+
+                iter_time = time.time() - iter_start_time
                 
                 with torch.no_grad():
                     train_err += computeErr(pred)
-
-                #torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
-                # if epoch > 0:
+                
+                #####################################
+                ######### compare grads with cvxpy:
+                ######################################
+                # init_learnable_vals = {
+                #     "A": model.A.data.detach().clone(),
+                #     "z0_a": model.z0_a.data.detach().clone(),
+                # }
+                # model_cvxpy = SingleOptLayerSudoku(n, learnable_parts=["eq"], layer_type="cvxpylayer", Qpenalty=Qpenalty, alpha=alpha, init_learnable_vals=init_learnable_vals)
+                # model_cvxpy.train()
+                # pred_cvxpy = model_cvxpy(x)
+                # loss_cvxpy = loss_fn(pred_cvxpy, y)
+                # loss_cvxpy.backward()
+                
+                # grad_A_cvxpy = model_cvxpy.A.grad.clone().detach().cpu().reshape(-1)#.numpy()
+                # grad_z0_cvxpy = model_cvxpy.z0_a.grad.clone().detach().cpu().reshape(-1)#.numpy()
+                
+                # grad_A = model.A.grad.clone().detach().cpu().reshape(-1)#.numpy()
+                # grad_z0 = model.z0_a.grad.clone().detach().cpu().reshape(-1)#.numpy()
+                
+                # with torch.no_grad():
+                #     grad_diff_A = torch.norm(grad_A - grad_A_cvxpy, p=1).item()
+                #     grad_cos_sim_A = torch.nn.functional.cosine_similarity(grad_A, grad_A_cvxpy, dim=0).item()
+                
+                #     ######## calculate cosine similarity between grads
+                #     writer.add_scalar('grad_A/train_cos_sim', grad_cos_sim_A, (epoch)*len(train_loader)+i)
+                #     ######## calculate l1 diff between grads
+                #     writer.add_scalar('grad_A/train_l1_diff', grad_diff_A, (epoch)*len(train_loader)+i)
+                    
+                #     grad_diff_z0 = torch.norm(grad_z0 - grad_z0_cvxpy, p=1).item()
+                #     grad_cos_sim_z0 = torch.nn.functional.cosine_similarity(grad_z0, grad_z0_cvxpy, dim=0).item()
+                
+                #     ######## calculate cosine similarity between grads
+                #     writer.add_scalar('grad_z0/train_cos_sim', grad_cos_sim_z0, (epoch)*len(train_loader)+i)
+                #     ######## calculate l1 diff between grads
+                #     writer.add_scalar('grad_z0/train_l1_diff', grad_diff_z0, (epoch)*len(train_loader)+i)
+                    
+                #     rank_A = np.linalg.matrix_rank(model.A.data.clone().cpu().detach().numpy())
+                #     cond_A = np.linalg.cond(model.A.data.clone().cpu().detach().numpy())
+                #     print(f"{(epoch)*len(train_loader)+i} : grad cos sim A: {grad_cos_sim_A} || grad l1 diff A: {grad_diff_A} || \n grad cos sim z0: {grad_cos_sim_z0} || grad l1 diff z0: {grad_diff_z0}")
+                #     print(f"rank A: {rank_A}, cond A: {cond_A}")
+                #     writer.add_scalar('constraints/rank A', rank_A, (epoch)*len(train_loader)+i)
+                #     writer.add_scalar('constraints/condition number A', cond_A, (epoch)*len(train_loader)+i)
+                    
                 optimizer.step()
 
                 optimizer.zero_grad()
@@ -141,11 +197,17 @@ def train_test_loop(args, experiment_dir, n):
                 train_loss_list.append(loss.item())
                 print(f"train loss: {loss.item()}, iter time: {iter_time}")
                 wandb.log({
-                    "train_loss": loss.item(),
+                    "train_loss": loss.item(), "iter_time": iter_time, "backward_time": backward_time, "forward_time": forward_time,
                 })
 
             if epoch%1==0 or epoch==num_epochs-1:
-                    torch.save(model.state_dict(), os.path.join(directory, f"model_epoch{epoch}.pt"))
+                    checkpoint = {
+                        'model_state_dict': model.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'epoch': epoch
+                    }
+                    # torch.save(model.state_dict(), os.path.join(directory, f"model_epoch{epoch}.pt"))
+                    torch.save(checkpoint, os.path.join(directory, f"checkpoint_epoch{epoch}.pt"))
             print('Forward time {}, backward time {}'.format(forward_time, backward_time))
 
             model.eval()
@@ -194,27 +256,17 @@ def train_test_loop(args, experiment_dir, n):
         writer.flush()
 
     
-    # import matplotlib.pyplot as plt
-
-    # # After training loop
-    # epochs = range(1, num_epochs + 1)
-
-    # plt.figure(figsize=(8,5))
-    # plt.plot(epochs, avg_train_loss, label='Train Loss', marker='o')
-    # plt.plot(epochs, avg_test_loss, label='Test Loss', marker='s')
-    # plt.xlabel('Epoch')
-    # plt.ylabel('MSE Loss')
-    # plt.title('Training and Test Loss')
-    # plt.legend()
-    # plt.grid(True)
-    # plt.tight_layout()
-    # plt.show()
     
+
+
+
+
  
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--method', type=str, default='ffocp_eq', help='ffocp_eq, lpgd, qpth, cvxpylayer')
     parser.add_argument('--epochs', type=int, default=10, help='number of epochs')
+    parser.add_argument('--resume_epoch', type=int, help="epoch number of the model you want to resume training")
     parser.add_argument('--seed', type=int, default=1, help='random seed')
     parser.add_argument('--lr', type=float, default=0.1, help='learning rate')
     parser.add_argument('--batch_size', type=int, default=32, help='batch size')
@@ -224,7 +276,7 @@ if __name__ == '__main__':
     parser.add_argument('--dual_cutoff', type=float, default=1e-3, help='dual cutoff')
     parser.add_argument('--slack_tol', type=float, default=1e-8, help='slack tolerance')
 
-    parser.add_argument('--cuda_device', type=int, default=0, help='cuda device')
+    parser.add_argument('--device', type=str, default='cuda:0', help='device')
     
     args = parser.parse_args()
     
@@ -239,7 +291,7 @@ if __name__ == '__main__':
     time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime())
     if not os.path.exists(f"wandb/{args.method}"):
         os.makedirs(f"wandb/{args.method}")
-    wandb.init(project=f"bilevel_layer_sudoku", name=f"sudoku_{time_str}", config=vars(args), dir=f"wandb/{args.method}")
+    wandb.init(project=f"bilevel_layer_sudoku_{args.method}", name=f"sudoku_{time_str}", config=vars(args), dir=f"wandb/{args.method}")
     
     try:
         train_test_loop(args, experiment_dir, n=n)
