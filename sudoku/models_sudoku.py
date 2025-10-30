@@ -10,6 +10,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import cvxpy as cp
 from ffocp_eq import BLOLayer
+from ffocp_eq_multithread import BLOLayer as BLOLayerMT
 from ffoqp_eq_cst import ffoqp as ffoqpLayer
 from qpth.qp import QPFunction
 from cvxpylayers.torch import CvxpyLayer
@@ -169,9 +170,28 @@ class SingleOptLayerSudoku(nn.Module):
         if self.layer_type not in [QPTH, FFOQP_EQ, LPGD_QP]:
             problem, objective, ineq_functions, eq_functions, params, variables = setup_cvx_qp_problem(opt_var_dim=self.y_dim, num_ineq=self.num_ineq, num_eq=self.num_eq)
             
+            multithread = True
+            batch_size = 4
             if layer_type==FFOCP_EQ:
-                # self.optlayer = BLOLayer(objective=objective, equality_functions=eq_functions, inequality_functions=ineq_functions, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol)
-                self.optlayer = BLOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol)
+                if not multithread:
+                    # self.optlayer = BLOLayer(objective=objective, equality_functions=eq_functions, inequality_functions=ineq_functions, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol)
+                    self.optlayer = BLOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol)
+                else:
+                    problem_list = []
+                    ineq_functions_list = []
+                    eq_functions_list = []
+                    params_list = []
+                    variables_list = []
+                    for i in range(batch_size):
+                        problem, objective, ineq_functions, eq_functions, params, variables = setup_cvx_qp_problem(opt_var_dim=self.y_dim, num_ineq=self.num_ineq, num_eq=self.num_eq)
+                        problem_list.append(problem)
+                        ineq_functions_list.append(ineq_functions)
+                        eq_functions_list.append(eq_functions)
+                        params_list.append(params)
+                        variables_list.append(variables)
+                    
+                    self.optlayer = BLOLayerMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol)
+                    
             elif layer_type==CVXPY_LAYER:
                 self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
             elif layer_type==LPGD:
