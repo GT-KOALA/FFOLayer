@@ -317,9 +317,9 @@ def _BLOLayerFn(
                     q.value = p
 
                 try:
-                    blolayer.problem.solve(solver=cp.GUROBI, warm_start=True,  **{"Threads": n_threads, "OutputFlag": 0})
+                    blolayer.problem.solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0})
                 except:
-                    print("GUROBI failed, using OSQP")
+                    print("Forward pass GUROBI failed, using OSQP")
                     blolayer.problem.solve(solver=cp.OSQP, warm_start=True, verbose=False)
                 
                 # convert to torch tensors and incorporate info_forward
@@ -360,8 +360,8 @@ def _BLOLayerFn(
             # convert to numpy arrays
             dvars_numpy = [to_numpy(dvar) for dvar in dvars]
             
-            temperature = 10
-            ineq_dual_tanh = [np.tanh(dual * temperature) for dual in ctx.ineq_dual]
+            # temperature = 10
+            # ineq_dual_tanh = [np.tanh(dual * temperature) for dual in ctx.ineq_dual]
 
             blolayer = ctx.blolayer
             sol_numpy = ctx.sol_numpy
@@ -422,7 +422,14 @@ def _BLOLayerFn(
                 for j, v in enumerate(blolayer.variables):
                     blolayer.dvar_params[j].value = dvars_numpy[j][i]
                     # ZIHAO ADDED
-                    # v.value = ctx._warm_vars[j]
+                    v.value = ctx._warm_vars[j]
+
+                for j, c in enumerate(blolayer.eq_constraints):
+                    if c.dual_value is None and ctx._warm_eq_duals[j] is not None:
+                        c.dual_value = ctx._warm_eq_duals[j]
+                for j, c in enumerate(blolayer.ineq_constraints):
+                    if c.dual_value is None and ctx._warm_ineq_duals[j] is not None:
+                        c.dual_value = ctx._warm_ineq_duals[j]
 
                 for j, _ in enumerate(blolayer.ineq_functions):
                     # key for bilevel algorithm: identify the active constraints and add them to the equality constraints
@@ -446,7 +453,8 @@ def _BLOLayerFn(
                 for j, _ in enumerate(blolayer.eq_functions):
                     blolayer.eq_dual_params[j].value = eq_dual[j][i]
 
-                blolayer.perturbed_problem.solve(solver=cp.GUROBI, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0, "FeasibilityTol": 1e-9})
+                # blolayer.perturbed_problem.solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0, "FeasibilityTol": 1e-9})
+                blolayer.perturbed_problem.solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0})
 
                 st = blolayer.perturbed_problem.status
                 try:
@@ -457,7 +465,7 @@ def _BLOLayerFn(
                         sol_diff = np.linalg.norm(sol_numpy[j][i] - v.value)
                         sol_diffs.append(sol_diff)
                 except:
-                    print("GUROBI failed, using OSQP")
+                    print("Backward pass GUROBI failed, using OSQP")
                     blolayer.perturbed_problem.solve(solver=cp.OSQP, eps_abs=1e-4, eps_rel=1e-4, warm_start=True, verbose=False)
                     for j, v in enumerate(blolayer.variables):
                         new_sol_lagrangian[j][i, ...] = v.value

@@ -522,7 +522,7 @@ def _BLOLayerFn(
                         sol_diffs.append(sol_diff)
                 except:
                     print("GUROBI failed, using OSQP")
-                    blolayer.perturbed_problem_list[i].solve(solver=cp.OSQP, eps_abs=1e-4, eps_rel=1e-4, n+_start=True, verbose=False)
+                    blolayer.perturbed_problem_list[i].solve(solver=cp.OSQP, eps_abs=1e-4, eps_rel=1e-4, warm_start=True, verbose=False)
                     for j, v in enumerate(blolayer.variables_list[i]):
                         new_sol_lagrangian[j][i, ...] = v.value
                         sol_diff = np.linalg.norm(sol_numpy[j][i] - v.value)

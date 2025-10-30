@@ -291,7 +291,7 @@ if __name__ == '__main__':
     time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime())
     if not os.path.exists(f"wandb/{args.method}"):
         os.makedirs(f"wandb/{args.method}")
-    wandb.init(project=f"bilevel_layer_sudoku_{args.method}", name=f"sudoku_{time_str}", config=vars(args), dir=f"wandb/{args.method}")
+    wandb.init(project=f"bilevel_layer_sudoku", name=f"sudoku_{time_str}", config=vars(args), dir=f"wandb/{args.method}")
     
     try:
         train_test_loop(args, experiment_dir, n=n)
