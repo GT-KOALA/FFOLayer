@@ -361,10 +361,7 @@ def _BLOLayerFn(
                     param_obj.value = p_val
 
                 try:
-                    # blolayer.problem_list[i].solve(solver=cp.SCS, warm_start=True, gpu=True, ignore_dpp=True, max_iters=2500, eps=1e-7)
-                    blolayer.problem_list[i].solve(solver=cp.MOSEK, 
-                                mosek_params = {'MSK_DPAR_OPTIMIZER_MAX_TIME':  5.0,
-                                    'MSK_IPAR_INTPNT_SOLVE_FORM':   'MSK_SOLVE_DUAL' })
+                    blolayer.problem_list[i].solve(solver=cp.SCS, warm_start=True, ignore_dpp=True, max_iters=2500, eps=1e-7)
                 except:
                     print("forward pass SCS failed, using OSQP")
                     blolayer.problem_list[i].solve(solver=cp.OSQP, warm_start=True, verbose=False)
@@ -515,8 +512,7 @@ def _BLOLayerFn(
                 for j, _ in enumerate(blolayer.eq_functions_list[i]):
                     blolayer.eq_dual_params_list[i][j].value = eq_dual[j][i]
 
-                # blolayer.perturbed_problem_list[i].solve(solver=cp.SCS, gpu=True, warm_start=True, ignore_dpp=True, max_iters=2500, eps=1e-7)
-                blolayer.perturbed_problem_list[i].solve(solver=cp.MOSEK)
+                blolayer.perturbed_problem_list[i].solve(solver=cp.SCS, warm_start=True, ignore_dpp=True, max_iters=2500, eps=1e-7)
 
                 st = blolayer.perturbed_problem_list[i].status
                 sol_diffs = []
