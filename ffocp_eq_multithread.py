@@ -246,7 +246,7 @@ class _BLOLayer(torch.nn.Module):
         """
         if solver_args is None:
             solver_args = {}
-        solver_args = {"warm_start": True, "solver": cp.GUROBI, "Threads": n_threads, "OutputFlag": 0, **solver_args}
+        solver_args = {"warm_start": True, "solver": cp.SCS, **solver_args}
         
         info = {}
         f = _BLOLayerFn(
@@ -336,7 +336,6 @@ def _BLOLayerFn(
                 ctx.batch_size = 1
             
             B = ctx.batch_size
-            assert(B==len(blolayer.problem_list))
 
             # convert to numpy arrays
             params_numpy = [to_numpy(p) for p in params]
@@ -360,12 +359,14 @@ def _BLOLayerFn(
                     if param_obj is None:
                         continue
                     param_obj.value = p_val
-                    # k+=1
 
                 try:
-                    blolayer.problem_list[i].solve(solver=cp.GUROBI, warm_start=True,  **{"Threads": 1, "OutputFlag": 0})
+                    # blolayer.problem_list[i].solve(solver=cp.SCS, warm_start=True, gpu=True, ignore_dpp=True, max_iters=2500, eps=1e-7)
+                    blolayer.problem_list[i].solve(solver=cp.MOSEK, 
+                                mosek_params = {'MSK_DPAR_OPTIMIZER_MAX_TIME':  5.0,
+                                    'MSK_IPAR_INTPNT_SOLVE_FORM':   'MSK_SOLVE_DUAL' })
                 except:
-                    print("GUROBI failed, using OSQP")
+                    print("forward pass SCS failed, using OSQP")
                     blolayer.problem_list[i].solve(solver=cp.OSQP, warm_start=True, verbose=False)
                 
                 # collect primal and dual outputs for this slot
@@ -378,12 +379,12 @@ def _BLOLayerFn(
 
             # run parallel solves while limiting BLAS/OpenMP threads to 1 (avoid oversubscription)
             with threadpool_limits(limits=1):
-                pool = ThreadPool(processes=n_threads)
+                pool = ThreadPool(processes=min(B, n_threads))
                 try:
                     results = pool.map(_solve_one_forward, range(B))
                 finally:
                     pool.close()
-                    pool.join()
+                    # pool.join()
 
             for i, (sol_i, eq_i, ineq_i, slack_i) in enumerate(results):
                 # convert to torch tensors and incorporate info_forward
@@ -424,8 +425,8 @@ def _BLOLayerFn(
             # convert to numpy arrays
             dvars_numpy = [to_numpy(dvar) for dvar in dvars]
             
-            temperature = 10
-            ineq_dual_tanh = [np.tanh(dual * temperature) for dual in ctx.ineq_dual]
+            # temperature = 10
+            # ineq_dual_tanh = [np.tanh(dual * temperature) for dual in ctx.ineq_dual]
 
             blolayer = ctx.blolayer
             sol_numpy = ctx.sol_numpy
@@ -450,7 +451,6 @@ def _BLOLayerFn(
                 req_grad_mask.append(req_grad)
 
             if _compute_cos_sim:
-                assert(1==0)
                 # compute ground truth gradient using cvxpylayer
                 cvxpylayer_problem = cp.Problem(cp.Minimize(blolayer.objective),
                             constraints=blolayer.eq_constraints + blolayer.ineq_constraints)
@@ -482,10 +482,16 @@ def _BLOLayerFn(
                 for j, _ in enumerate(blolayer.param_order_list[i]):
                     blolayer.param_order_list[i][j].value = params_numpy[j][i]
 
+                # ZIHAO ADDED
                 for j, v in enumerate(blolayer.variables_list[i]):
                     blolayer.dvar_params_list[i][j].value = dvars_numpy[j][i]
-                    # ZIHAO ADDED
-                    # v.value = ctx._warm_vars[j]
+                    v.value = ctx._warm_vars_list[i][j]
+                for j, c in enumerate(blolayer.eq_constraints_list[i]):
+                    if c.dual_value is None and ctx._warm_eq_duals_list[i][j] is not None:
+                        c.dual_value = ctx._warm_eq_duals_list[i][j]
+                for j, c in enumerate(blolayer.ineq_constraints_list[i]):
+                    if c.dual_value is None and ctx._warm_ineq_duals_list[i][j] is not None:
+                        c.dual_value = ctx._warm_ineq_duals_list[i][j]
 
                 for j, _ in enumerate(blolayer.ineq_functions_list[i]):
                     # key for bilevel algorithm: identify the active constraints and add them to the equality constraints
@@ -509,7 +515,8 @@ def _BLOLayerFn(
                 for j, _ in enumerate(blolayer.eq_functions_list[i]):
                     blolayer.eq_dual_params_list[i][j].value = eq_dual[j][i]
 
-                blolayer.perturbed_problem_list[i].solve(solver=cp.GUROBI, warm_start=True, **{"Threads": 1, "OutputFlag": 0, "FeasibilityTol": 1e-9})
+                # blolayer.perturbed_problem_list[i].solve(solver=cp.SCS, gpu=True, warm_start=True, ignore_dpp=True, max_iters=2500, eps=1e-7)
+                blolayer.perturbed_problem_list[i].solve(solver=cp.MOSEK)
 
                 st = blolayer.perturbed_problem_list[i].status
                 sol_diffs = []
@@ -521,7 +528,7 @@ def _BLOLayerFn(
                         sol_diff = np.linalg.norm(sol_numpy[j][i] - v.value)
                         sol_diffs.append(sol_diff)
                 except:
-                    print("GUROBI failed, using OSQP")
+                    print("backward pass SCS failed, using OSQP")
                     blolayer.perturbed_problem_list[i].solve(solver=cp.OSQP, eps_abs=1e-4, eps_rel=1e-4, warm_start=True, verbose=False)
                     for j, v in enumerate(blolayer.variables_list[i]):
                         new_sol_lagrangian[j][i, ...] = v.value
@@ -531,12 +538,12 @@ def _BLOLayerFn(
             
             # run parallel solves while limiting BLAS/OpenMP threads to 1 (avoid oversubscription)
             with threadpool_limits(limits=1):
-                pool = ThreadPool(processes=n_threads)
+                pool = ThreadPool(processes=min(B, n_threads))
                 try:
                     sol_diffs_list = pool.map(_solve_one_backward, range(B))
                 finally:
                     pool.close()
-                    pool.join()
+                    # pool.join()
 
 
             for i in range(B):
@@ -590,7 +597,6 @@ def _BLOLayerFn(
             grads = [p.grad for p in params_req]
 
             if _compute_cos_sim:
-                assert(1==0)
                 with torch.no_grad():
                     total_l2 = torch.sqrt(sum(
                         (g.detach().float() ** 2).sum()

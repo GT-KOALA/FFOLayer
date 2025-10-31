@@ -10,6 +10,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import cvxpy as cp
 from ffocp_eq import BLOLayer
+# from ffocp_eq_multithread_wo_list import BLOLayer as BLOLayerMT
 from ffocp_eq_multithread import BLOLayer as BLOLayerMT
 from ffoqp_eq_cst import ffoqp as ffoqpLayer
 from qpth.qp import QPFunction
@@ -92,7 +93,7 @@ def get_Q_from_L(self, L, eps):
     return Q
 
 class SingleOptLayerSudoku(nn.Module):
-    def __init__(self, n, learnable_parts, layer_type, Qpenalty=0.1, alpha=100, init_learnable_vals=None, dual_cutoff=1e-3, slack_tol=1e-6):
+    def __init__(self, n, learnable_parts, layer_type, Qpenalty=0.1, alpha=100, init_learnable_vals=None, dual_cutoff=1e-3, slack_tol=1e-6, batch_size=32):
         '''
         The architecture is {parameter - optLayer}.
         
@@ -171,7 +172,6 @@ class SingleOptLayerSudoku(nn.Module):
             problem, objective, ineq_functions, eq_functions, params, variables = setup_cvx_qp_problem(opt_var_dim=self.y_dim, num_ineq=self.num_ineq, num_eq=self.num_eq)
             
             multithread = True
-            batch_size = 4
             if layer_type==FFOCP_EQ:
                 if not multithread:
                     # self.optlayer = BLOLayer(objective=objective, equality_functions=eq_functions, inequality_functions=ineq_functions, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol)
@@ -191,6 +191,7 @@ class SingleOptLayerSudoku(nn.Module):
                         variables_list.append(variables)
                     
                     self.optlayer = BLOLayerMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol)
+                    # self.optlayer = BLOLayerMT(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol)
                     
             elif layer_type==CVXPY_LAYER:
                 self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)

@@ -69,7 +69,7 @@ def train_test_loop(args, experiment_dir, n):
     alpha = args.alpha
     dual_cutoff = args.dual_cutoff
     Qpenalty = 0.1
-    model = SingleOptLayerSudoku(n, learnable_parts=['eq'], layer_type=method, Qpenalty=Qpenalty, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=args.slack_tol)
+    model = SingleOptLayerSudoku(n, learnable_parts=['eq'], layer_type=method, Qpenalty=Qpenalty, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=args.slack_tol, batch_size=batch_size)
     model = model.to(device)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0)
