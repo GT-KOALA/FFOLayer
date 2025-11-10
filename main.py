@@ -13,6 +13,8 @@ import cvxpy as cp
 import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 
+from ffocp_eq import BLOLayer
+from ffocp_eq_multithread import BLOLayer as BLOLayerMT
 import ffoqp
 import ffoqp_eq_cst
 import ffoqp_eq_cst_schur
@@ -25,7 +27,7 @@ from data import *
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--method', type=str, default='ffoqp_eq_cst', help='ffoqp, ts, qpth, ffoqp_eq_cst_pdipm, ffoqp_eq_cst ffoqp_eq_cst_schur')
+    parser.add_argument('--method', type=str, default='ffocp_eq_mt', help='ffoqp, ffocp_eq_mt, ffocp_eq, ts, qpth, ffoqp_eq_cst_pdipm, ffoqp_eq_cst ffoqp_eq_cst_schur')
     parser.add_argument('--epochs', type=int, default=20, help='number of epochs')
     parser.add_argument('--seed', type=int, default=3, help='random seed')
     parser.add_argument('--eps', type=float, default=0.1, help='lambda for ffoqp')
@@ -95,7 +97,7 @@ if __name__ == '__main__':
     # Solver options
     # Note: the current version only works for the CVXPY solver
     # solver = QPSolvers.PDIPM_BATCHED
-    if 'ffo' in method:
+    if 'ffoqp' in method:
         if method == 'ffoqp':
             ffoqp_layer = ffoqp.ffoqp(lamb=lamb, verbose=-1)
         elif method == 'ffoqp_eq_cst_pdipm':
@@ -108,6 +110,27 @@ if __name__ == '__main__':
             ffoqp_layer = ffoqp_eq_cst_parallelize.ffoqp(alpha=100, chunk_size=1)
         else:
             raise ValueError('Invalid method: {}'.format(method))
+    elif 'ffocp' in method:
+        if method == 'ffocp_eq':
+            ffocp_layer = BLOLayer(problem, parameters=[Q_cp, q_cp, G_cp, h_cp], variables=[z_cp], alpha=100, dual_cutoff=1e-3, slack_tol=1e-8, eps=1e-12)
+        elif method == 'ffocp_eq_mt':
+            problem_list, params_list, variables_list = [], [], []
+            n_ineq_constraints = 2 * n + 1
+            for i in range(args.batch_size):
+                z_i = cp.Variable(n)
+                Q_i = cp.Parameter((n, n), PSD=True)
+                q_i = cp.Parameter(n)
+                G_i = cp.Parameter((n_ineq_constraints, n))
+                h_i = cp.Parameter(n_ineq_constraints)
+                obj_i = 0.5 * cp.sum_squares(Q_i @ z_i) + q_i.T @ z_i
+                cons_i = [G_i @ z_i <= h_i]
+
+                prob_i = cp.Problem(cp.Minimize(obj_i), cons_i)
+
+                problem_list.append(prob_i)
+                params_list.append([Q_i, q_i, G_i, h_i])
+                variables_list.append([z_i])
+            ffocp_layer = BLOLayerMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=100, dual_cutoff=1e-3, slack_tol=1e-8, eps=1e-12)
 
     qpth_layer = QPFunction(verbose=-1)
     directory = 'results_{}/{}/'.format(args.batch_size, method)
@@ -135,8 +158,10 @@ if __name__ == '__main__':
             start_time = time.time()
             y_pred = model(x)
             ts_loss = loss_fn(y_pred, y)
-            if 'ffo' in method:
+            if 'ffoqp' in method:
                 z = ffoqp_layer(Q, y_pred, G, h, A, b)
+                if isinstance(z, tuple):
+                    z = z[0]
                 loss = torch.mean(y * z) + ts_loss * ts_weight + torch.norm(z) * norm_weight
                 # if i % 100 == 0:
                 #     print('ffoqp time elapsed:', time.time() - start_time)
@@ -163,6 +188,17 @@ if __name__ == '__main__':
                 #     delta = delta - learning_rate * y_grad
                 #     delta = torch.clamp(delta, min=-D, max=D)
                 #     y_pred.grad = - delta.repeat(y_pred.shape[0], 1) / learning_rate
+            elif 'ffocp' in method:
+                cur_batch_size = y_pred.shape[0]
+                # Q_batch = Q.repeat(cur_batch_size, 1, 1)
+                # G_batch = G.repeat(cur_batch_size, 1, 1)
+                # h_batch = h.repeat(cur_batch_size, 1)
+                Q_batch = Q.unsqueeze(0).expand(cur_batch_size, -1, -1).contiguous()
+                G_batch = G.unsqueeze(0).expand(cur_batch_size, -1, -1).contiguous()
+                h_batch = h.unsqueeze(0).expand(cur_batch_size, -1).contiguous()
+                sol = ffocp_layer(Q_batch, y_pred, G_batch, h_batch)
+                z = sol[0]
+                loss = torch.mean(y * z) + ts_loss * ts_weight + torch.norm(z) * norm_weight
             elif method == 'ts':
                 # z = torch.zeros(n)
                 z = qpth_layer(Q, y_pred.detach(), G, h, A, b)

@@ -45,6 +45,7 @@ def BLOLayer(
     dual_cutoff: float = 1e-3,
     slack_tol: float = 1e-8,
     compute_cos_sim: bool = False,
+    eps: float = 1e-7,
 ):
     """
     Create an optimization layer that can be called like a CvxpyLayer:
@@ -116,6 +117,7 @@ def BLOLayer(
         dual_cutoff=dual_cutoff,
         slack_tol=slack_tol,
         _compute_cos_sim=compute_cos_sim,
+        eps=eps,
     )
 
 class _BLOLayer(torch.nn.Module):
@@ -155,7 +157,7 @@ class _BLOLayer(torch.nn.Module):
         ```
     """
 
-    def __init__(self, objective_list, eq_functions_list, ineq_functions_list, parameters_list, variables_list, alpha, dual_cutoff, slack_tol, _compute_cos_sim=False):
+    def __init__(self, objective_list, eq_functions_list, ineq_functions_list, parameters_list, variables_list, alpha, dual_cutoff, slack_tol, eps, _compute_cos_sim=False):
         """Construct a BLOLayer
 
         Args:
@@ -185,6 +187,7 @@ class _BLOLayer(torch.nn.Module):
         self.dual_cutoff = dual_cutoff
         self.slack_tol = float(slack_tol) 
         self._compute_cos_sim = _compute_cos_sim
+        self.eps = eps
         
         self.eq_constraints_list = [[f == 0 for f in eq_functions] for eq_functions in eq_functions_list]
         self.ineq_constraints_list = [[g <= 0 for g in ineq_functions] for ineq_functions in ineq_functions_list]
@@ -361,7 +364,7 @@ def _BLOLayerFn(
                     param_obj.value = p_val
 
                 try:
-                    blolayer.problem_list[i].solve(solver=cp.SCS, warm_start=True, ignore_dpp=True, max_iters=2500, eps=1e-7)
+                    blolayer.problem_list[i].solve(solver=cp.SCS, warm_start=True, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
                 except:
                     print("forward pass SCS failed, using OSQP")
                     blolayer.problem_list[i].solve(solver=cp.OSQP, warm_start=True, verbose=False)
@@ -512,7 +515,7 @@ def _BLOLayerFn(
                 for j, _ in enumerate(blolayer.eq_functions_list[i]):
                     blolayer.eq_dual_params_list[i][j].value = eq_dual[j][i]
 
-                blolayer.perturbed_problem_list[i].solve(solver=cp.SCS, warm_start=True, ignore_dpp=True, max_iters=2500, eps=1e-7)
+                blolayer.perturbed_problem_list[i].solve(solver=cp.SCS, warm_start=True, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
 
                 st = blolayer.perturbed_problem_list[i].status
                 sol_diffs = []

@@ -39,6 +39,7 @@ def BLOLayer(
     alpha: float = 100.0,
     dual_cutoff: float = 1e-3,
     slack_tol: float = 1e-8,
+    eps: float = 1e-7,
     compute_cos_sim: bool = False,
 ):
     """
@@ -91,6 +92,7 @@ def BLOLayer(
         alpha=alpha,
         dual_cutoff=dual_cutoff,
         slack_tol=slack_tol,
+        eps=eps,
         _compute_cos_sim=compute_cos_sim,
     )
 
@@ -131,7 +133,7 @@ class _BLOLayer(torch.nn.Module):
         ```
     """
 
-    def __init__(self, objective, eq_functions, ineq_functions, parameters, variables, alpha, dual_cutoff, slack_tol, _compute_cos_sim=False):
+    def __init__(self, objective, eq_functions, ineq_functions, parameters, variables, alpha, dual_cutoff, slack_tol, eps, _compute_cos_sim=False):
         """Construct a BLOLayer
 
         Args:
@@ -158,7 +160,8 @@ class _BLOLayer(torch.nn.Module):
         self.dual_cutoff = dual_cutoff
         self.slack_tol = float(slack_tol) 
         self._compute_cos_sim = _compute_cos_sim
-        
+        self.eps = eps
+
         self.eq_constraints = [f == 0 for f in eq_functions]
         self.ineq_constraints = [g <= 0 for g in ineq_functions]
         self.problem = cp.Problem(cp.Minimize(objective), self.eq_constraints + self.ineq_constraints)
@@ -317,7 +320,8 @@ def _BLOLayerFn(
                     q.value = p
 
                 try:
-                    blolayer.problem.solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0})
+                    # blolayer.problem.solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0})
+                    blolayer.problem.solve(solver=cp.SCS, warm_start=True, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
                 except:
                     print("Forward pass GUROBI failed, using OSQP")
                     blolayer.problem.solve(solver=cp.OSQP, warm_start=True, verbose=False)
@@ -453,8 +457,8 @@ def _BLOLayerFn(
                 for j, _ in enumerate(blolayer.eq_functions):
                     blolayer.eq_dual_params[j].value = eq_dual[j][i]
 
-                # blolayer.perturbed_problem.solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0, "FeasibilityTol": 1e-9})
-                blolayer.perturbed_problem.solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0})
+                # blolayer.perturbed_problem.solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0})
+                blolayer.perturbed_problem.solve(solver=cp.SCS, warm_start=True, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
 
                 st = blolayer.perturbed_problem.status
                 try:

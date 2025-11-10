@@ -178,7 +178,8 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                     left=False)
                 pine = torch.linalg.lstsq(Aq, Aq @ aapl).solution
                 # dlam = torch.linalg.lstsq(Aq.mT, pine, driver='gelsd').solution
-                dlam = torch.linalg.lstsq(Aq.mT, pine, driver='gels').solution
+                # dlam = torch.linalg.lstsq(Aq.mT, pine, driver='gels').solution
+                dlam = torch.linalg.lstsq(Aq.mT, pine, driver='gelsy').solution
                 dz = torch.linalg.solve_triangular(sqrtQ.mT, aapl - pine, upper=True)
                 dzhat[:] = dz
                 dnu[:] = dlam[..., 0]
