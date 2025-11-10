@@ -16,6 +16,7 @@ from ffocp_eq_multithread import BLOLayer as BLOLayerMT
 
 from qpthlocal.qp import QPFunction
 from cvxpylayers.torch import CvxpyLayer
+# from cvxpylayers_local.cvxpylayer import CvxpyLayer
 from cvxpylayers_local.cvxpylayer import CvxpyLayer as LPGDLayer
 
 import ffoqp_eq_cst
@@ -125,7 +126,7 @@ class OptModel(nn.Module):
         if self.layer_type not in [QPTH, LPGD_QP]:
             problem, objective_fn, constraints, params, variables = setup_cvxpy_synthetic_problem(opt_dim)
     
-            multithread = True
+            multithread = False
             if layer_type==FFOCP_EQ:
                 if not multithread:
                     self.optlayer = BLOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol)

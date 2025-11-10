@@ -29,7 +29,9 @@ if __name__ == '__main__':
     parser.add_argument('--slack_tol', type=float, default=1e-8, help='slack tolerance')
 
     parser.add_argument('--device', type=str, default='cuda:0', help='device')
-    parser.add_argument('--learn_constraint', type=int, default=0, help='whether to learn constraint')
+    parser.add_argument('--learn_constraint', type=int, default=1, help='whether to learn constraint')
+    parser.add_argument('--suffix', type=str, default="", help='suffix to the result directory')
+    
     
     args = parser.parse_args()
 
@@ -55,6 +57,8 @@ if __name__ == '__main__':
     batch_size = args.batch_size
 
     train_loader, test_loader = genData(device, input_dim, ydim, num_samples, batch_size)
+    # print(len(train_loader))
+    # assert(len(train_loader)*batch_size == 1600)
 
     model = OptModel(input_dim, ydim, layer_type=method, constraint_learnable=(args.learn_constraint==1), batch_size=batch_size, device=device, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0)
@@ -69,7 +73,7 @@ if __name__ == '__main__':
     # Note: the current version only works for the CVXPY solver
     # solver = QPSolvers.PDIPM_BATCHED
 
-    directory = '../synthetic_results_{}/{}/'.format(args.batch_size, method)
+    directory = '../synthetic_results_{}{}/{}/'.format(args.batch_size, args.suffix, method)
     filename = '{}_ydim{}_lr{}_seed{}.csv'.format(method, ydim, learning_rate, seed)
     if os.path.exists(directory + filename):
         os.remove(directory + filename)
@@ -129,15 +133,30 @@ if __name__ == '__main__':
 
             print('Forward time {}, backward time {}'.format(forward_time, backward_time))
 
-            model.eval()
-            with torch.no_grad():
-                for i, (x, y) in enumerate(test_loader):
-                    z, y_pred = model(x) #opt solution, predicted q
-                    ts_loss = loss_fn(y_pred, y)
-                    df_loss = torch.mean(y * z)
+            # model.eval()
+            # with torch.no_grad():
+            #     for i, (x, y) in enumerate(test_loader):
+            #         # print("batch size : ", x.shape[0])
+            #         z, y_pred = model(x) #opt solution, predicted q
+            #         ts_loss = loss_fn(y_pred, y)
+            #         df_loss = torch.mean(y * z)
+                    
+            #         optimizer.zero_grad()
 
-                    test_ts_loss_list.append(ts_loss.item())
-                    test_df_loss_list.append(df_loss.item())
+            #         test_ts_loss_list.append(ts_loss.item())
+            #         test_df_loss_list.append(df_loss.item())
+            model.eval()
+            for i, (x, y) in enumerate(test_loader):
+                # print("batch size : ", x.shape[0])
+                z, y_pred = model(x) #opt solution, predicted q
+                ts_loss = loss_fn(y_pred, y)
+                df_loss = torch.mean(y * z)
+                
+                optimizer.zero_grad()
+
+                test_ts_loss_list.append(ts_loss.item())
+                test_df_loss_list.append(df_loss.item())
+
 
             train_ts_loss = np.mean(train_ts_loss_list)
             train_df_loss = np.mean(train_df_loss_list)
