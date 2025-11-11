@@ -122,7 +122,7 @@ if __name__ == '__main__':
                 q_i = cp.Parameter(n)
                 G_i = cp.Parameter((n_ineq_constraints, n))
                 h_i = cp.Parameter(n_ineq_constraints)
-                obj_i = 0.5 * cp.sum_squares(Q_i @ z_i) + q_i.T @ z_i
+                obj_i = 0.5 * cp.quad_form(z_i, Q_i) + q_i.T @ z_i
                 cons_i = [G_i @ z_i <= h_i]
 
                 prob_i = cp.Problem(cp.Minimize(obj_i), cons_i)
