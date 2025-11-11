@@ -195,7 +195,7 @@ def kkt_schur_fast(Q, A, delta, L_cached=None, eps_q=1e-8, eps_s=1e-10,
 
     return dz, dlam
 
-def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=True, chunk_size=100,
+def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=False, chunk_size=100,
           solver='GUROBI', solver_opts={"verbose": False},
           exact_bwd_sol=True, slack_cutoff=1e-8):
     """ -> kamo

@@ -34,7 +34,7 @@ from typing import cast, List, Optional, Union
 #         self.solver = solver if solver is not None else QPSolvers.CVXPY
 #         self.lamb = lamb
 
-def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=True, chunk_size=100):
+def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=False, chunk_size=100):
     """ -> kamo
     change lamb to alpha to prevent confusion
     """

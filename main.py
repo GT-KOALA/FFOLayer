@@ -27,12 +27,12 @@ from data import *
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--method', type=str, default='ffocp_eq_mt', help='ffoqp, ffocp_eq_mt, ffocp_eq, ts, qpth, ffoqp_eq_cst_pdipm, ffoqp_eq_cst ffoqp_eq_cst_schur')
+    parser.add_argument('--method', type=str, default='ffocp_eq_mt', help='ffoqp, ffocp_eq_mt, ffocp_eq, ts, qpth, ffoqp_eq_cst_pdipm, ffoqp_eq_cst, ffoqp_eq_cst_schur')
     parser.add_argument('--epochs', type=int, default=20, help='number of epochs')
     parser.add_argument('--seed', type=int, default=1, help='random seed')
     parser.add_argument('--eps', type=float, default=0.1, help='lambda for ffoqp')
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate')
-    parser.add_argument('--batch_size', type=int, default=32, help='batch size')
+    parser.add_argument('--batch_size', type=int, default=1, help='batch size')
     parser.add_argument('--ydim', type=int, default=200, help='dimension of y')
     
     args = parser.parse_args()
@@ -105,7 +105,7 @@ if __name__ == '__main__':
         elif method == 'ffoqp_eq_cst':
             ffoqp_layer = ffoqp_eq_cst.ffoqp(alpha=100, chunk_size=100)
         elif method == 'ffoqp_eq_cst_schur':
-            ffoqp_layer = ffoqp_eq_cst_schur.ffoqp(alpha=100, chunk_size=100, solver='SCS', solver_opts={"verbose": False})
+            ffoqp_layer = ffoqp_eq_cst_schur.ffoqp(alpha=100, chunk_size=100, solver='PDIPM', solver_opts={"verbose": False})
         elif method == 'ffoqp_eq_cst_parallelize':
             ffoqp_layer = ffoqp_eq_cst_parallelize.ffoqp(alpha=100, chunk_size=100)
         else:
