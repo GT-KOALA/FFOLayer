@@ -130,19 +130,20 @@ def train_test_loop(args, experiment_dir, n):
                 y = y.to(device)
                 iter_start_time = time.time()
                 
-                start_time = time.time()
+                forward_start_time = time.time()
                 pred = model(x)
                 # print(f"pred abs max: {torch.max(torch.abs(pred))}, pred abs min:{torch.min(torch.abs(pred))}")
                 # print(f"pred : {decode_onehot(pred[0])}")
                 loss = loss_fn(pred, y)
                 
-                forward_time += time.time() - start_time
+                forward_time += time.time() - forward_start_time
+                iter_forward_time = time.time() - forward_start_time
 
-                start_time = time.time()
+                backward_start_time = time.time()
                 loss.backward()
-                backward_time += time.time() - start_time
+                backward_time += time.time() - backward_start_time
+                iter_backward_time = time.time() - backward_start_time
 
-                iter_time = time.time() - iter_start_time
                 
                 with torch.no_grad():
                     train_err += computeErr(pred)
@@ -195,9 +196,10 @@ def train_test_loop(args, experiment_dir, n):
                 optimizer.zero_grad()
 
                 train_loss_list.append(loss.item())
-                print(f"train loss: {loss.item()}, iter time: {iter_time}")
+                print(f"train loss: {loss.item()}, iter time: {iter_forward_time + iter_backward_time}")
                 wandb.log({
-                    "train_loss": loss.item(), "iter_time": iter_time, "backward_time": backward_time, "forward_time": forward_time,
+                    "train_loss": loss.item(), "iter_time": iter_forward_time + iter_backward_time, "accumulated_backward_time": backward_time, "accumulated_forward_time": forward_time,
+                    "iter_forward_time": iter_forward_time, "iter_backward_time": iter_backward_time,
                 })
 
             if epoch%1==0 or epoch==num_epochs-1:

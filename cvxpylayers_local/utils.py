@@ -144,8 +144,10 @@ def backward_numpy(dvars_numpy, context):
         dys.append(np.zeros(context.info['shapes'][i][0]))
         dss.append(np.zeros(context.info['shapes'][i][0]))
 
+    start = time.time()
     dAs, dbs, dcs = context.info['DT_batch'](dxs, dys, dss)
-
+    info['dDT_time'] = time.time() - start
+    
     # differentiate from cone problem data to cvxpy parameters
     start = time.time()
     grad = [[] for _ in range(len(context.param_ids))]
@@ -176,6 +178,5 @@ def backward_numpy(dvars_numpy, context):
         for i, sz in enumerate(context.batch_sizes):
             if sz == 0:
                 grad[i] = grad[i].sum(axis=0)
-    # import pdb; pdb.set_trace()
     
     return grad, info

@@ -324,6 +324,7 @@ def _CvxpyLayerFn(
             # convert to torch tensors and incorporate info_backward
             grad = [to_torch(g, ctx.dtype, ctx.device) for g in grad_numpy]
             info.update(info_backward)
+            print("canon_time", info['canon_time'], "solve_time", info['solve_time'], "dcanon_time", info['dcanon_time'], "dDT_time", info['dDT_time'])
 
             return tuple(grad)
 

@@ -364,10 +364,10 @@ def _BLOLayerFn(
                     param_obj.value = p_val
 
                 try:
-                    blolayer.problem_list[i].solve(solver=cp.SCS, warm_start=True, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
+                    blolayer.problem_list[i].solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
                 except:
                     print("forward pass SCS failed, using OSQP")
-                    blolayer.problem_list[i].solve(solver=cp.OSQP, warm_start=True, verbose=False)
+                    blolayer.problem_list[i].solve(solver=cp.OSQP, warm_start=False, verbose=False)
                 
                 # collect primal and dual outputs for this slot
                 sol_vals = [v.value for v in blolayer.variables_list[i]]

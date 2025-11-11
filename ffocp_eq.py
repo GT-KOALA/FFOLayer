@@ -321,10 +321,10 @@ def _BLOLayerFn(
 
                 try:
                     # blolayer.problem.solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0})
-                    blolayer.problem.solve(solver=cp.SCS, warm_start=True, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
+                    blolayer.problem.solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
                 except:
                     print("Forward pass GUROBI failed, using OSQP")
-                    blolayer.problem.solve(solver=cp.OSQP, warm_start=True, verbose=False)
+                    blolayer.problem.solve(solver=cp.OSQP, warm_start=False, verbose=False)
                 
                 # convert to torch tensors and incorporate info_forward
                 for v_id, v in enumerate(blolayer.variables):

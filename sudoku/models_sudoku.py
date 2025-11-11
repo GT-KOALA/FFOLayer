@@ -16,8 +16,9 @@ from ffocp_eq_multithread import BLOLayer as BLOLayerMT
 from ffoqp_eq_cst_schur import ffoqp as ffoqpLayer
 # from ffoqp_eq_cst_pdipm import ffoqp as ffoqpLayer
 from qpthlocal.qp import QPFunction
-from cvxpylayers.torch import CvxpyLayer
-from cvxpylayers_local.cvxpylayer import CvxpyLayer as LPGDLayer
+# from cvxpylayers.torch import CvxpyLayer
+from cvxpylayers_local.cvxpylayer import CvxpyLayer
+# from cvxpylayers_local.cvxpylayer import CvxpyLayer as LPGDLayer
 from ffoqp_lpgd import ffoqp as lpgd_ffoqp
 
 
@@ -200,7 +201,7 @@ class SingleOptLayerSudoku(nn.Module):
                 self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
             elif layer_type==LPGD:
                 # problem, objective, ineq_functions, eq_functions, params, variables = setup_cvx_qp_problem(opt_var_dim=self.y_dim, num_ineq=self.num_ineq, num_eq=self.num_eq, ignore_ineq=True)
-                self.optlayer = LPGDLayer(problem, parameters=params, variables=variables, lpgd=True)
+                self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables, lpgd=True)
         else:
             if self.layer_type==QPTH:
                 self.optlayer = QPFunction(verbose=-1)
