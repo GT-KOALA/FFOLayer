@@ -27,7 +27,7 @@ from data import *
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--method', type=str, default='ffocp_eq_mt', help='ffoqp, ffocp_eq_mt, ffocp_eq, ts, qpth, ffoqp_eq_cst_pdipm, ffoqp_eq_cst, ffoqp_eq_cst_schur')
+    parser.add_argument('--method', type=str, default='ffocp_eq', help='ffoqp, ffocp_eq_mt, ffocp_eq, ts, qpth, ffoqp_eq_cst_pdipm, ffoqp_eq_cst, ffoqp_eq_cst_schur')
     parser.add_argument('--epochs', type=int, default=20, help='number of epochs')
     parser.add_argument('--seed', type=int, default=1, help='random seed')
     parser.add_argument('--eps', type=float, default=0.1, help='lambda for ffoqp')
@@ -67,32 +67,33 @@ if __name__ == '__main__':
     loss_fn = torch.nn.MSELoss()
     writer = SummaryWriter()
 
-    # Setup the optimization problem
-    Q = torch.eye(n)
-    # p = y_pred
-    G = torch.cat([torch.eye(n), -torch.eye(n), torch.ones(1,n)], dim=0)
-    h = torch.cat([torch.zeros(n), torch.ones(n), torch.Tensor([3])], dim=0)
-    A = torch.Tensor()
-    b = torch.Tensor()
+    m_socp = 32
 
-    deltas = [torch.zeros_like(parameter) for parameter in model.parameters()]
-    gradients = [torch.zeros_like(parameter) for parameter in model.parameters()]
+    # Setup the optimization problem
+    rng = np.random.default_rng(seed)
+    A_socp_np = rng.standard_normal(size=(m_socp, n))
+    A_socp_np = A_socp_np / (np.linalg.norm(A_socp_np, axis=1, keepdims=True) + 1e-12)
+    b_socp_np = 1.5 + 0.5 * rng.random(size=(m_socp,))
+
+    A_socp = torch.tensor(A_socp_np, dtype=torch.float32)
+    b_socp = torch.tensor(b_socp_np, dtype=torch.float32)
+
+    # deltas = [torch.zeros_like(parameter) for parameter in model.parameters()]
+    # gradients = [torch.zeros_like(parameter) for parameter in model.parameters()]
     eta = learning_rate
     D = eps**3
 
     # Constructing cvxpylayer instance
-    n_ineq_constraints = 2 * n + 1
-    Q_cp = cp.Parameter((n, n), PSD=True)
-    q_cp = cp.Parameter(n)
-    G_cp = cp.Parameter((n_ineq_constraints, n))
-    h_cp = cp.Parameter(n_ineq_constraints)
-    z_cp = cp.Variable(n)
+    z_v  = cp.Variable(n)
+    q_p  = cp.Parameter(n)
+    A_p  = cp.Parameter((m_socp, n))
+    b_p  = cp.Parameter(m_socp)
 
-    objective_fn = 0.5 * cp.sum_squares(Q_cp @ z_cp) + q_cp.T @ z_cp
-    constraints = [G_cp @ z_cp <= h_cp]
+    constraints = [A_p[i, :] @ z_v + cp.norm(z_v, 2) <= b_p[i] for i in range(m_socp)]
 
-    problem = cp.Problem(cp.Minimize(objective_fn), constraints)
-    layer = CvxpyLayer(problem, parameters=[Q_cp, q_cp, G_cp, h_cp], variables=[z_cp])
+    objective = cp.Minimize(q_p @ z_v)
+    problem = cp.Problem(objective, constraints)
+    cvxpylayer = CvxpyLayer(problem, parameters=[q_p, A_p, b_p], variables=[z_v])
 
     # Solver options
     # Note: the current version only works for the CVXPY solver
@@ -112,7 +113,7 @@ if __name__ == '__main__':
             raise ValueError('Invalid method: {}'.format(method))
     elif 'ffocp' in method:
         if method == 'ffocp_eq':
-            ffocp_layer = BLOLayer(problem, parameters=[Q_cp, q_cp, G_cp, h_cp], variables=[z_cp], alpha=100, dual_cutoff=1e-3, slack_tol=1e-8, eps=1e-12)
+            ffocp_layer = BLOLayer(problem, parameters=[q_p, A_p, b_p], variables=[z_v], alpha=100, dual_cutoff=1e-3, slack_tol=1e-8, eps=1e-12)
         elif method == 'ffocp_eq_mt':
             problem_list, params_list, variables_list = [], [], []
             n_ineq_constraints = 2 * n + 1
@@ -158,45 +159,11 @@ if __name__ == '__main__':
             start_time = time.time()
             y_pred = model(x)
             ts_loss = loss_fn(y_pred, y)
-            if 'ffoqp' in method:
-                z = ffoqp_layer(Q, y_pred, G, h, A, b)
-                if isinstance(z, tuple):
-                    z = z[0]
-                loss = torch.mean(y * z) + ts_loss * ts_weight + torch.norm(z) * norm_weight
-                # if i % 100 == 0:
-                #     print('ffoqp time elapsed:', time.time() - start_time)
-                # start_time = time.time()
-                # if i % 100 == 0:
-                #     print('ffoqp backward time elapsed:', time.time() - start_time)
-
-                # s = torch.rand(1)
-                # for i, parameter in enumerate(model.parameters()):
-                #     deltas[i] = torch.clamp(deltas[i] - eta * parameter.grad, min=-D, max=D) # Clip delta
-                #     parameter.grad = - s * deltas[i] - gradients[i]
-                #     gradients[i] = deltas[i] * (1 - s)
-
-                # for i, parameter in enumerate(model.parameters()):
-                #     s = torch.randn(parameter.shape)
-                #     parameter.grad += s * 0.01 - deltas[i]
-                #     deltas[i] = s
-
-                # y_grad = y_pred.grad
-                # print(y_grad)
-                # if y_grad is not None:
-                #     y_grad = torch.mean(y_grad, dim=0, keepdim=True)
-                #     D = learning_rate
-                #     delta = delta - learning_rate * y_grad
-                #     delta = torch.clamp(delta, min=-D, max=D)
-                #     y_pred.grad = - delta.repeat(y_pred.shape[0], 1) / learning_rate
-            elif 'ffocp' in method:
+            if 'ffocp' in method:
                 cur_batch_size = y_pred.shape[0]
-                # Q_batch = Q.repeat(cur_batch_size, 1, 1)
-                # G_batch = G.repeat(cur_batch_size, 1, 1)
-                # h_batch = h.repeat(cur_batch_size, 1)
-                Q_batch = Q.unsqueeze(0).expand(cur_batch_size, -1, -1).contiguous()
-                G_batch = G.unsqueeze(0).expand(cur_batch_size, -1, -1).contiguous()
-                h_batch = h.unsqueeze(0).expand(cur_batch_size, -1).contiguous()
-                sol = ffocp_layer(Q_batch, y_pred, G_batch, h_batch)
+                A_batch = A_socp.unsqueeze(0).expand(cur_batch_size, -1, -1).contiguous()
+                b_batch = b_socp.unsqueeze(0).expand(cur_batch_size, -1).contiguous()
+                sol = ffocp_layer(y_pred, A_batch, b_batch)
                 z = sol[0]
                 loss = torch.mean(y * z) + ts_loss * ts_weight + torch.norm(z) * norm_weight
             elif method == 'ts':
@@ -207,7 +174,7 @@ if __name__ == '__main__':
                 z = qpth_layer(Q, y_pred, G, h, A, b)
                 loss = torch.mean(y * z) + ts_loss * ts_weight + torch.norm(z) * norm_weight
             elif method == 'cvxpylayer':
-                sol = layer(Q, y_pred, G, h)
+                sol = cvxpylayer(y_pred, A_socp, b_socp)
                 z = sol[0]
                 loss = torch.mean(y * z) + ts_loss * ts_weight + torch.norm(z) * norm_weight
 
@@ -233,7 +200,8 @@ if __name__ == '__main__':
         with torch.no_grad():
             for i, (x, y) in enumerate(test_loader):
                 y_pred = model(x)
-                z = qpth_layer(Q, y_pred.detach(), G, h, A, b)
+                sol = cvxpylayer(y_pred, A_socp, b_socp)
+                z = sol[0]
                 ts_loss = loss_fn(y_pred, y)
                 df_loss = torch.mean(y * z) 
 

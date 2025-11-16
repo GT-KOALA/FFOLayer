@@ -33,7 +33,7 @@ from typing import cast, List, Optional, Union
 #         self.solver = solver if solver is not None else QPSolvers.CVXPY
 #         self.lamb = lamb
 
-def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=True, chunk_size=100,
+def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=False, chunk_size=100,
           solver='GUROBI', solver_opts={"verbose": False},
           exact_bwd_sol=True, slack_cutoff=1e-8):
     """ -> kamo
@@ -179,7 +179,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                 pine = torch.linalg.lstsq(Aq, Aq @ aapl).solution
                 # dlam = torch.linalg.lstsq(Aq.mT, pine, driver='gelsd').solution
                 # dlam = torch.linalg.lstsq(Aq.mT, pine, driver='gels').solution
-                dlam = torch.linalg.lstsq(Aq.mT, pine, driver='gelsy').solution
+                dlam = torch.linalg.lstsq(Aq.mT, pine, driver='gelsd').solution
                 dz = torch.linalg.solve_triangular(sqrtQ.mT, aapl - pine, upper=True)
                 dzhat[:] = dz
                 dnu[:] = dlam[..., 0]

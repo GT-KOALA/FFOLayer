@@ -2,7 +2,6 @@ import time
 import cvxpy as cp
 import numpy as np
 import os
-from copy import copy
 
 import torch
 from cvxtorch import TorchExpression
@@ -68,7 +67,7 @@ def BLOLayer(
         if objective_expr is None:
             raise ValueError("Unsupported objective type; expected Minimize/Maximize.")
 
-    eq_funcs, ineq_funcs = [], []
+    eq_funcs, ineq_funcs, soc_funcs = [], [], []
     for c in problem.constraints:
         # Equality: g(x,θ) == 0  -> store g(x,θ)
         if isinstance(c, cp.constraints.zero.Equality):
@@ -77,6 +76,9 @@ def BLOLayer(
         # Inequality: g(x,θ) <= 0 -> store g(x,θ)
         elif isinstance(c, cp.constraints.nonpos.Inequality):
             ineq_funcs.append(c.expr)
+
+        elif isinstance(c, cp.constraints.second_order.SOC):
+            soc_funcs.append(c)
 
         else:
             # save for PSD or SOC constraints
@@ -88,6 +90,7 @@ def BLOLayer(
         objective=objective_expr,
         eq_functions=eq_funcs,
         ineq_functions=ineq_funcs,
+        soc_functions=soc_funcs,
         parameters=parameters,
         variables=variables,
         alpha=alpha,
@@ -134,7 +137,7 @@ class _BLOLayer(torch.nn.Module):
         ```
     """
 
-    def __init__(self, objective, eq_functions, ineq_functions, parameters, variables, alpha, dual_cutoff, slack_tol, eps, _compute_cos_sim=False):
+    def __init__(self, objective, eq_functions, ineq_functions, soc_functions, parameters, variables, alpha, dual_cutoff, slack_tol, eps, _compute_cos_sim=False):
         """Construct a BLOLayer
 
         Args:
@@ -155,6 +158,7 @@ class _BLOLayer(torch.nn.Module):
         self.objective = objective
         self.eq_functions = eq_functions
         self.ineq_functions = ineq_functions
+        self.soc_functions = soc_functions
         self.param_order = parameters
         self.variables = variables
         self.alpha = alpha
@@ -165,32 +169,47 @@ class _BLOLayer(torch.nn.Module):
 
         self.eq_constraints = [f == 0 for f in eq_functions]
         self.ineq_constraints = [g <= 0 for g in ineq_functions]
-        self.problem = cp.Problem(cp.Minimize(objective), self.eq_constraints + self.ineq_constraints)
+        self.soc_constraints = [h for h in soc_functions]
+        self.problem = cp.Problem(cp.Minimize(objective), self.eq_constraints + self.ineq_constraints + self.soc_constraints)
 
         self.dvar_params   = [cp.Parameter(shape=v.shape) for v in variables]
         self.eq_dual_params   = [cp.Parameter(shape=f.shape) for f in eq_functions]
         self.ineq_dual_params = [cp.Parameter(shape=f.shape) for f in ineq_functions]
         self.active_mask_params = [cp.Parameter(shape=f.shape) for f in ineq_functions]
+        self.soc_dual_params_0 = [cp.Parameter(shape=f.dual_variables[0].shape, nonneg=True) for f in soc_functions]
+        self.soc_dual_params_1 = [cp.Parameter(shape=f.dual_variables[1].shape) for f in soc_functions]
+        self.soc_lam_params = [cp.Parameter(shape=f.shape) for f in soc_functions]
 
         vars_dvars_product = cp.sum([cp.sum(cp.multiply(dv, v))
                                     for dv, v in zip(self.dvar_params, variables)])
         ineq_dual_product = cp.sum([cp.sum(cp.multiply(lm, g))
                                     for lm, g in zip(self.ineq_dual_params, ineq_functions)])
+        soc_dual_product = cp.sum([
+            cp.multiply(cp.pnorm(h.args[1].expr, p=2) - h.args[0].expr, du)
+            for du, h in zip(self.soc_dual_params_0, soc_functions)
+        ])
 
-        self.new_objective = (1/self.alpha) * vars_dvars_product + objective + ineq_dual_product
+        self.new_objective = (1/self.alpha) * vars_dvars_product + objective + ineq_dual_product + soc_dual_product
         self.active_eq_constraints = [
             cp.multiply(self.active_mask_params[j], ineq_functions[j]) == 0
             for j in range(len(ineq_functions))
         ]
+        self.soc_lin_constraints = [
+            self.soc_dual_params_1[j].T @ soc_functions[j].args[1].expr
+            + cp.multiply(soc_functions[j].args[0].expr, self.soc_dual_params_0[j]) == 0
+            for j in range(len(soc_functions))
+        ]
         self.perturbed_problem = cp.Problem(cp.Minimize(self.new_objective),
-                                        self.eq_constraints + self.active_eq_constraints)
+                                        self.eq_constraints + self.active_eq_constraints + self.soc_lin_constraints)
 
         phi_expr = objective \
             + cp.sum([cp.sum(cp.multiply(du, f)) for du, f in zip(self.eq_dual_params, eq_functions)]) \
-            + cp.sum([cp.sum(cp.multiply(du, f)) for du, f in zip(self.ineq_dual_params, ineq_functions)])
+            + cp.sum([cp.sum(cp.multiply(du, f)) for du, f in zip(self.ineq_dual_params, ineq_functions)]) \
+            + soc_dual_product \
+            + cp.sum([cp.sum(cp.multiply(du, f.expr)) for du, f in zip(self.soc_lam_params, self.soc_lin_constraints)])
         self.phi_torch = TorchExpression(
             phi_expr,
-            provided_vars_list=[*variables, *self.param_order, *self.eq_dual_params, *self.ineq_dual_params]
+            provided_vars_list=[*variables, *self.param_order, *self.eq_dual_params, *self.ineq_dual_params, *self.soc_dual_params_0, *self.soc_dual_params_1, *self.soc_lam_params]
         ).torch_expression
 
     def forward(self, *params, solver_args={}):
@@ -307,6 +326,9 @@ def _BLOLayerFn(
             eq_dual = [np.empty((B,) + f.shape, dtype=float) for f in blolayer.eq_functions]
             ineq_dual = [np.empty((B,) + g.shape, dtype=float) for g in blolayer.ineq_functions]
             ineq_slack_residual = [np.empty((B,) + g.shape, dtype=float) for g in blolayer.ineq_functions]
+            soc_dual_0 = [np.empty((B,) + h.dual_variables[0].shape, dtype=float) for h in soc_functions]
+            soc_dual_1 = [np.empty((B,) + h.dual_variables[1].shape, dtype=float) for h in soc_functions]
+
 
             for i in range(B):
                 if ctx.batch:
@@ -337,6 +359,10 @@ def _BLOLayerFn(
                 for c_id, c in enumerate(blolayer.ineq_constraints):
                     ineq_dual[c_id][i, ...] = c.dual_value
 
+                for c_id, c in enumerate(blolayer.soc_constraints):
+                    soc_dual_0[c_id][i, ...] = c.dual_value[0]
+                    soc_dual_1[c_id][i, ...] = c.dual_value[1]
+
                 for c_id, expr in enumerate(blolayer.ineq_functions):
                     g_val = expr.value
                     s_val = -g_val
@@ -346,16 +372,17 @@ def _BLOLayerFn(
             ctx.sol_numpy = sol_numpy
             ctx.eq_dual = eq_dual
             ctx.ineq_dual = ineq_dual
+            ctx.soc_dual_0 = soc_dual_0
+            ctx.soc_dual_1 = soc_dual_1
             ctx.params_numpy = params_numpy
             ctx.params = params
             ctx.slack = ineq_slack_residual
             ctx.blolayer = blolayer
 
-            ctx._warm_vars = [copy(v.value) for v in blolayer.variables]
-            if len(blolayer.eq_constraints) > 0:
-                ctx._warm_eq_duals = [copy(c.dual_value) for c in blolayer.eq_constraints]
-            ctx._warm_ineq_duals = [copy(c.dual_value) for c in blolayer.ineq_constraints]
-            ctx._warm_ineq_slack_residuals = [copy(c.value) for c in blolayer.ineq_functions]
+            ctx._warm_vars = [v.value.copy() for v in blolayer.variables]
+            ctx._warm_eq_duals = [c.dual_value.copy() for c in blolayer.eq_constraints]
+            ctx._warm_ineq_duals = [c.dual_value.copy() for c in blolayer.ineq_constraints]
+            ctx._warm_ineq_slack_residuals = [c.value.copy() for c in blolayer.ineq_functions]
 
             sol_torch = [to_torch(arr, ctx.dtype, ctx.device) for arr in sol_numpy]
 
@@ -373,6 +400,8 @@ def _BLOLayerFn(
             sol_numpy = ctx.sol_numpy
             eq_dual = ctx.eq_dual
             ineq_dual = ctx.ineq_dual
+            soc_dual_0 = ctx.soc_dual_0
+            soc_dual_1 = ctx.soc_dual_1
             slack = ctx.slack
             y_dim = dvars_numpy[0].shape[1]
             if len(eq_dual) == 0:
@@ -418,6 +447,7 @@ def _BLOLayerFn(
             new_eq_dual = [np.empty_like(eq_dual[k]) for k in range(len(blolayer.eq_constraints))]
 
             new_active_dual = [np.empty((B,) + c.shape, dtype=float) for c in blolayer.active_eq_constraints]
+            new_soc_lam = [np.empty((B,) + c.shape, dtype=float) for c in blolayer.soc_lin_constraints]
             
             sol_diffs = []
 
@@ -485,14 +515,19 @@ def _BLOLayerFn(
                 for c_id, c in enumerate(blolayer.active_eq_constraints):
                     if c.dual_value.any() == None:
                         print(f"active inequality constraint {c_id} dual value is None")
-                    active_mask = np.array([a.value for a in blolayer.active_mask_params])
+                    # active_mask = np.array([a.value for a in blolayer.active_mask_params])
                     new_active_dual[c_id][i, ...] = c.dual_value
+                for c_id, c in enumerate(blolayer.soc_lin_constraints):
+                    if c.dual_value.any() == None:
+                        print(f"active SOC constraint {c_id} dual value is None")
+                    new_soc_lam[c_id][i, ...] = c.dual_value
             
             # print('--- sol_diff mean: ', np.mean(np.array(sol_diffs)), 'max: ', np.max(np.array(sol_diffs)), 'min: ', np.min(np.array(sol_diffs)))
 
             new_sol = [to_torch(v, ctx.dtype, ctx.device) for v in new_sol_lagrangian]
             new_ineq_dual_torch = [to_torch(v, ctx.dtype, ctx.device) for v in new_active_dual]
             new_eq_dual_torch = [to_torch(v, ctx.dtype, ctx.device) for v in new_eq_dual]
+            new_soc_lam_torch = [to_torch(v, ctx.dtype, ctx.device) for v in new_soc_lam]
 
             # sol_dis = torch.linalg.norm(to_torch(new_sol_lagrangian[0], ctx.dtype, ctx.device) - to_torch(sol_numpy[0], ctx.dtype, ctx.device))
             # print("solution distance: {:.6f}".format(sol_dis))
@@ -541,11 +576,15 @@ def _BLOLayerFn(
 
                     new_eq_dual_i = [d[i] for d in new_eq_dual_torch]
                     new_ineq_dual_i = [d[i] for d in new_ineq_dual_torch]
+                    new_soc_lam_i = [d[i] for d in new_soc_lam_torch]
+                    old_soc_lam_i = [torch.zeros_like(d[i]) for d in new_soc_lam_torch]
                     old_eq_dual_i = [to_torch(eq_dual[j][i], ctx.dtype, ctx.device) for j in range(len(blolayer.eq_constraints))]
                     old_ineq_dual_i = [to_torch(ineq_dual[j][i], ctx.dtype, ctx.device) for j in range(len(blolayer.ineq_functions))]
+                    old_soc_dual_0_i = [to_torch(soc_dual_0[j][i], ctx.dtype, ctx.device) for j in range(len(blolayer.soc_functions))]
+                    old_soc_dual_1_i = [to_torch(soc_dual_1[j][i], ctx.dtype, ctx.device) for j in range(len(blolayer.soc_functions))]
 
-                    phi_new_i = blolayer.phi_torch(*vars_new_i, *params_i, *new_eq_dual_i, *new_ineq_dual_i)
-                    phi_old_i = blolayer.phi_torch(*vars_old_i, *params_i, *old_eq_dual_i, *old_ineq_dual_i)
+                    phi_new_i = blolayer.phi_torch(*vars_new_i, *params_i, *new_eq_dual_i, *new_ineq_dual_i, *old_soc_dual_0_i, *old_soc_dual_1_i, *new_soc_lam_i)
+                    phi_old_i = blolayer.phi_torch(*vars_old_i, *params_i, *old_eq_dual_i, *old_ineq_dual_i, *old_soc_dual_1_i, *old_soc_dual_1_i, *old_soc_lam_i)
                     loss +=  phi_new_i - phi_old_i
 
                 loss = blolayer.alpha * loss

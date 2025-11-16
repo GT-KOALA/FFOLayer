@@ -151,8 +151,8 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, exact_b
                 aapl = rsqrtQ @ -delta_directions
                 Aq = G_active @ rsqrtQ
                 pine = torch.linalg.lstsq(Aq, Aq @ aapl).solution
-                # dlam = torch.linalg.lstsq(Aq.transpose(-1, -2), pine, driver='gelsd').solution
-                dlam = torch.linalg.lstsq(Aq.transpose(-1, -2), pine, driver='gels').solution
+                dlam = torch.linalg.lstsq(Aq.transpose(-1, -2), pine, driver='gelsd').solution
+                # dlam = torch.linalg.lstsq(Aq.transpose(-1, -2), pine, driver='gels').solution
                 dz = rsqrtQ @ (aapl - pine)
                 dzhat[:] = dz
                 dnu[:] = dlam[..., 0]
