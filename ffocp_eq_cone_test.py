@@ -9,9 +9,9 @@ from ffocp_eq_cone import BLOLayer
 def test_soc_blolayer_vs_cvxpy():
     torch.manual_seed(0)
 
-    n = 100
+    n = 500
     n_eq_constraints   = 0
-    n_ineq_constraints = 50
+    n_ineq_constraints = 200
     Q = torch.eye(n)
     q = torch.rand(n)
     q.requires_grad_(True)

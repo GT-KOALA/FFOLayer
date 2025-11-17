@@ -7,6 +7,7 @@ from copy import copy
 import torch
 from cvxtorch import TorchExpression
 from cvxpylayers.torch import CvxpyLayer
+from cvxpy.constraints.second_order import SOC
 import wandb
 from utils import to_numpy, to_torch, _dump_cvxpy, n_threads, slice_params_for_batch
 
@@ -69,6 +70,9 @@ def BLOLayer(
             raise ValueError("Unsupported objective type; expected Minimize/Maximize.")
 
     eq_funcs, ineq_funcs = [], []
+    ineq_is_soc = []
+    soc_X_exprs = []
+    soc_t_exprs = []
     for c in problem.constraints:
         # Equality: g(x,θ) == 0  -> store g(x,θ)
         if isinstance(c, cp.constraints.zero.Equality):
@@ -77,7 +81,18 @@ def BLOLayer(
         # Inequality: g(x,θ) <= 0 -> store g(x,θ)
         elif isinstance(c, cp.constraints.nonpos.Inequality):
             ineq_funcs.append(c.expr)
+            ineq_is_soc.append(False)
+            soc_X_exprs.append(None)
+            soc_t_exprs.append(None)
 
+        elif isinstance(c, SOC):
+            # Build g(z) = ||x||_2 - t <= 0, which is equivalent
+            t, X = c.args
+            g_expr = cp.norm(X, 2) - t
+            ineq_funcs.append(g_expr)
+            ineq_is_soc.append(True)
+            soc_X_exprs.append(X)
+            soc_t_exprs.append(t)
         else:
             # save for PSD or SOC constraints
             raise NotImplementedError(
@@ -94,6 +109,9 @@ def BLOLayer(
         dual_cutoff=dual_cutoff,
         slack_tol=slack_tol,
         eps=eps,
+        ineq_is_soc=ineq_is_soc,
+        soc_X_exprs=soc_X_exprs,
+        soc_t_exprs=soc_t_exprs,
         _compute_cos_sim=compute_cos_sim,
     )
 
@@ -134,7 +152,7 @@ class _BLOLayer(torch.nn.Module):
         ```
     """
 
-    def __init__(self, objective, eq_functions, ineq_functions, parameters, variables, alpha, dual_cutoff, slack_tol, eps, _compute_cos_sim=False):
+    def __init__(self, objective, eq_functions, ineq_functions, parameters, variables, alpha, dual_cutoff, slack_tol, eps, ineq_is_soc, soc_X_exprs, soc_t_exprs, _compute_cos_sim=False):
         """Construct a BLOLayer
 
         Args:
@@ -172,18 +190,66 @@ class _BLOLayer(torch.nn.Module):
         self.ineq_dual_params = [cp.Parameter(shape=f.shape, nonneg=True) for f in ineq_functions]
         self.active_mask_params = [cp.Parameter(shape=f.shape) for f in ineq_functions]
 
-        vars_dvars_product = cp.sum([cp.sum(cp.multiply(dv, v))
-                                    for dv, v in zip(self.dvar_params, variables)])
-        ineq_dual_product = cp.sum([cp.sum(cp.multiply(lm, g))
-                                    for lm, g in zip(self.ineq_dual_params, ineq_functions)])
+        # New: SOC constraints
+        self.ineq_is_soc = ineq_is_soc or [False] * len(ineq_functions)
+        self.soc_X_exprs = soc_X_exprs
+        self.soc_t_exprs = soc_t_exprs
 
-        self.new_objective = (1/self.alpha) * vars_dvars_product + objective + ineq_dual_product
-        self.active_eq_constraints = [
-            cp.multiply(self.active_mask_params[j], ineq_functions[j]) == 0
-            for j in range(len(ineq_functions))
-        ]
-        self.perturbed_problem = cp.Problem(cp.Minimize(self.new_objective),
-                                        self.eq_constraints + self.active_eq_constraints)
+        self.soc_zstar_params = []
+        self.soc_tstar_params = []
+        for j, is_soc in enumerate(self.ineq_is_soc):
+            if is_soc:
+                X = self.soc_X_exprs[j]
+                t = self.soc_t_exprs[j]
+                self.soc_zstar_params.append(cp.Parameter(shape=X.shape))
+                self.soc_tstar_params.append(cp.Parameter(shape=t.shape))
+            else:
+                self.soc_zstar_params.append(None)
+                self.soc_tstar_params.append(None)
+
+        vars_dvars_product = cp.sum([
+            cp.sum(cp.multiply(dv, v))
+            for dv, v in zip(self.dvar_params, variables)
+        ])
+        ineq_dual_product = cp.sum([
+            cp.sum(cp.multiply(lm, g))
+            for lm, g in zip(self.ineq_dual_params, ineq_functions)
+        ])
+
+        self.new_objective = (1/self.alpha) * vars_dvars_product \
+                             + objective + ineq_dual_product
+
+        # Build active equality constraints: inear/affine inequalities + SOC inequalities: mask * (first-order Taylor at z*) == 0
+        self.active_eq_constraints = []
+        for j, g in enumerate(ineq_functions):
+            if self.ineq_is_soc[j]:
+                X = self.soc_X_exprs[j]
+                t = self.soc_t_exprs[j]
+                z_star_param = self.soc_zstar_params[j]
+                t_star_param = self.soc_tstar_params[j]
+
+                # direction = z*/||z*||, all Parameters → safe in DPP
+                direction = z_star_param / cp.norm(z_star_param, 2)
+
+                # first-order Taylor: <direction, v - z*> = 0
+                # scalar expression
+                lin_part = cp.sum(cp.multiply(direction, X - z_star_param))
+                t_part = t - t_star_param
+                lin_expr = lin_part - t_part
+
+                self.active_eq_constraints.append(
+                    cp.multiply(self.active_mask_params[j], lin_expr) == 0
+                )
+            else:
+                # linear/affine: just enforce g == 0 as before
+                self.active_eq_constraints.append(
+                    cp.multiply(self.active_mask_params[j], g) == 0
+                )
+
+        self.perturbed_problem = cp.Problem(
+            cp.Minimize(self.new_objective),
+            self.eq_constraints + self.active_eq_constraints
+        )
 
         phi_expr = objective \
             + cp.sum([cp.sum(cp.multiply(du, f)) for du, f in zip(self.eq_dual_params, eq_functions)]) \
@@ -436,8 +502,16 @@ def _BLOLayerFn(
             sol_diffs = []
 
             for i in range(B):
+                if ctx.batch:
+                    params_numpy_i = [
+                        p[i] if bs > 0 else p
+                        for p, bs in zip(params_numpy, ctx.batch_sizes)
+                    ]
+                else:
+                    params_numpy_i = params_numpy
+                
                 for j, _ in enumerate(blolayer.param_order):
-                    blolayer.param_order[j].value = params_numpy[j][i]
+                    blolayer.param_order[j].value = params_numpy_i[j]
 
                 for j, v in enumerate(blolayer.variables):
                     blolayer.dvar_params[j].value = dvars_numpy[j][i]
@@ -472,13 +546,25 @@ def _BLOLayerFn(
 
                 for j, _ in enumerate(blolayer.eq_functions):
                     blolayer.eq_dual_params[j].value = eq_dual[j][i]
+                
+                for j, is_soc in enumerate(blolayer.ineq_is_soc):
+                    if is_soc:
+                        X = blolayer.soc_X_exprs[j]
+                        t = blolayer.soc_t_exprs[j]
+
+                        blolayer.soc_zstar_params[j].value = np.array(X.value)
+                        blolayer.soc_tstar_params[j].value = np.array(t.value)
 
                 # blolayer.perturbed_problem.solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0})
+                # blolayer.perturbed_problem.solve(solver=cp.SCS, warm_start=True, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
+
                 backward_solver_args = dict(ctx.solver_args)
                 if ctx.solver_args.get("solver") != cp.MOSEK:
                     backward_solver_args["warm_start"] = True
 
                 blolayer.perturbed_problem.solve(**backward_solver_args)
+
+                # blolayer.perturbed_problem.solve(**ctx.solver_args)
 
                 st = blolayer.perturbed_problem.status
                 try:
