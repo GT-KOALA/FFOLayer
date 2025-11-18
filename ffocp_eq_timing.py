@@ -10,6 +10,8 @@ from cvxpylayers.torch import CvxpyLayer
 import wandb
 from utils import to_numpy, to_torch, _dump_cvxpy, n_threads, slice_params_for_batch
 
+import time
+
 @torch.no_grad()
 def _compare_grads(params_req, grads, ground_truth_grads):
     est_chunks, gt_chunks = [], []
@@ -42,6 +44,7 @@ def BLOLayer(
     slack_tol: float = 1e-8,
     eps: float = 1e-7,
     compute_cos_sim: bool = False,
+    solver_name="SCS"
 ):
     """
     Create an optimization layer that can be called like a CvxpyLayer:
@@ -95,6 +98,8 @@ def BLOLayer(
         slack_tol=slack_tol,
         eps=eps,
         _compute_cos_sim=compute_cos_sim,
+        solver_name=solver_name
+        
     )
 
 class _BLOLayer(torch.nn.Module):
@@ -134,7 +139,7 @@ class _BLOLayer(torch.nn.Module):
         ```
     """
 
-    def __init__(self, objective, eq_functions, ineq_functions, parameters, variables, alpha, dual_cutoff, slack_tol, eps, _compute_cos_sim=False):
+    def __init__(self, objective, eq_functions, ineq_functions, parameters, variables, alpha, dual_cutoff, slack_tol, eps, _compute_cos_sim=False, solver_name="SCS"):
         """Construct a BLOLayer
 
         Args:
@@ -169,7 +174,7 @@ class _BLOLayer(torch.nn.Module):
 
         self.dvar_params   = [cp.Parameter(shape=v.shape) for v in variables]
         self.eq_dual_params   = [cp.Parameter(shape=f.shape) for f in eq_functions]
-        self.ineq_dual_params = [cp.Parameter(shape=f.shape, nonneg=True) for f in ineq_functions]
+        self.ineq_dual_params = [cp.Parameter(shape=f.shape) for f in ineq_functions]
         self.active_mask_params = [cp.Parameter(shape=f.shape) for f in ineq_functions]
 
         vars_dvars_product = cp.sum([cp.sum(cp.multiply(dv, v))
@@ -192,6 +197,27 @@ class _BLOLayer(torch.nn.Module):
             phi_expr,
             provided_vars_list=[*variables, *self.param_order, *self.eq_dual_params, *self.ineq_dual_params]
         ).torch_expression
+        
+        ##### timing for debugging
+        self.time_forward_optimization = None
+        self.time_backward_optimization = None
+        self.time_pre_autograd = None
+        self.time_autograd = None
+        
+        self.forward_num_iters = None
+        self.forward_setup_time = None
+        self.forward_solve_time = None
+        self.forward_lin_sys_time = None
+        
+        self.backward_num_iters = None
+        self.backward_setup_time = None
+        self.backward_solve_time = None
+        self.backward_lin_sys_time = None
+        
+        
+        
+        self.solver_name = solver_name
+       
 
     def forward(self, *params, solver_args={}):
         """Solve problem (or a batch of problems) corresponding to `params`
@@ -211,24 +237,14 @@ class _BLOLayer(torch.nn.Module):
         """
         if solver_args is None:
             solver_args = {}
-        elif solver_args.get("solver") == cp.SCS:
-            default_solver_args = dict(
-                solver=cp.SCS,
-                warm_start=False,
-                ignore_dpp=True,
-                max_iters=2500,
-                eps=self.eps,
-            )
-        else:
-            default_solver_args = {"ignore_dpp": True}
-        solver_args = {**default_solver_args, **solver_args}
+        solver_args = {"warm_start": True, "solver": cp.GUROBI, "Threads": n_threads, "OutputFlag": 0, **solver_args}
         
         info = {}
         f = _BLOLayerFn(
             blolayer=self,
-            solver_args=solver_args,
             _compute_cos_sim=self._compute_cos_sim,
-            info=info
+            info=info,
+            solver_name=self.solver_name
         )
         sol = f(*params)
         self.info = info
@@ -236,16 +252,15 @@ class _BLOLayer(torch.nn.Module):
 
 def _BLOLayerFn(
         blolayer,
-        solver_args,
         _compute_cos_sim,
-        info):
+        info,
+        solver_name):
     class _BLOLayerFnFn(torch.autograd.Function):
         @staticmethod
         def forward(ctx, *params):
             # infer dtype, device, and whether or not params are batched
             ctx.dtype = params[0].dtype
             ctx.device = params[0].device
-            ctx.solver_args = solver_args
 
             ctx.batch_sizes = []
             for i, (p, q) in enumerate(zip(params, blolayer.param_order)):
@@ -320,7 +335,8 @@ def _BLOLayerFn(
             eq_dual = [np.empty((B,) + f.shape, dtype=float) for f in blolayer.eq_functions]
             ineq_dual = [np.empty((B,) + g.shape, dtype=float) for g in blolayer.ineq_functions]
             ineq_slack_residual = [np.empty((B,) + g.shape, dtype=float) for g in blolayer.ineq_functions]
-
+            
+            avg_time = 0
             for i in range(B):
                 if ctx.batch:
                     # select the i-th batch element for each parameter
@@ -333,13 +349,30 @@ def _BLOLayerFn(
                 for p, q in zip(params_numpy_i, blolayer.param_order):
                     q.value = p
 
+                start_time = time.time()
                 try:
-                    # blolayer.problem.solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0})
-                    # blolayer.problem.solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
-                    blolayer.problem.solve(**ctx.solver_args)
+                    if solver_name=="SCS":
+                        blolayer.problem.solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
+                    elif solver_name=="OSQP":
+                        blolayer.problem.solve(solver=cp.OSQP, warm_start=False, verbose=False, eps_abs=1e-4, eps_rel=1e-4, max_iter=2500)
+                    elif solver_name=="GUROBI":
+                        blolayer.problem.solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0})       
                 except:
                     print("Forward pass GUROBI failed, using OSQP")
                     blolayer.problem.solve(solver=cp.OSQP, warm_start=False, verbose=False)
+                avg_time += time.time() - start_time
+                
+                stats = blolayer.problem.solver_stats
+                # print("** forward solve stats:", blolayer.problem.solver_stats)
+                if solver_name=="SCS":
+                    blolayer.forward_lin_sys_time = stats.extra_stats['info']['lin_sys_time']
+                    blolayer.forward_setup_time = stats.extra_stats['info']['setup_time']
+                    blolayer.forward_solve_time = stats.extra_stats['info']['solve_time']
+                elif solver_name=="OSQP":
+                    blolayer.forward_setup_time = stats.extra_stats.info.setup_time
+                    blolayer.forward_solve_time = stats.extra_stats.info.solve_time
+                blolayer.forward_num_iters = stats.num_iters
+                
                 
                 # convert to torch tensors and incorporate info_forward
                 for v_id, v in enumerate(blolayer.variables):
@@ -356,6 +389,8 @@ def _BLOLayerFn(
                     s_val = -g_val
                     s_val = np.maximum(s_val, 0.0)
                     ineq_slack_residual[c_id][i, ...] = s_val
+                    
+            blolayer.time_forward_optimization = avg_time #/B
 
             ctx.sol_numpy = sol_numpy
             ctx.eq_dual = eq_dual
@@ -435,13 +470,14 @@ def _BLOLayerFn(
             
             sol_diffs = []
 
+            avg_time = 0
             for i in range(B):
                 for j, _ in enumerate(blolayer.param_order):
                     blolayer.param_order[j].value = params_numpy[j][i]
 
                 for j, v in enumerate(blolayer.variables):
                     blolayer.dvar_params[j].value = dvars_numpy[j][i]
-                    # Warm start
+                    # ZIHAO ADDED
                     v.value = ctx._warm_vars[j]
 
                 for j, c in enumerate(blolayer.eq_constraints):
@@ -473,12 +509,27 @@ def _BLOLayerFn(
                 for j, _ in enumerate(blolayer.eq_functions):
                     blolayer.eq_dual_params[j].value = eq_dual[j][i]
 
-                # blolayer.perturbed_problem.solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0})
-                backward_solver_args = dict(ctx.solver_args)
-                if ctx.solver_args.get("solver") != cp.MOSEK:
-                    backward_solver_args["warm_start"] = True
-
-                blolayer.perturbed_problem.solve(**backward_solver_args)
+                start_time = time.time()
+                if solver_name=="SCS":
+                    blolayer.perturbed_problem.solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
+                elif solver_name=="OSQP":
+                    blolayer.perturbed_problem.solve(solver=cp.OSQP, warm_start=False, verbose=False, eps_abs=1e-4, eps_rel=1e-4, max_iter=2500)
+                elif solver_name=="GUROBI":
+                    blolayer.perturbed_problem.solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0})
+                 
+                avg_time += time.time() - start_time
+                
+                stats = blolayer.perturbed_problem.solver_stats
+                # print("** backward solve stats:", blolayer.perturbed_problem.solver_stats)
+                if solver_name=="SCS":
+                    blolayer.backward_lin_sys_time = stats.extra_stats['info']['lin_sys_time']
+                    blolayer.backward_setup_time = stats.extra_stats['info']['setup_time']
+                    blolayer.backward_solve_time = stats.extra_stats['info']['solve_time']
+                elif solver_name=="OSQP":
+                    blolayer.backward_setup_time = stats.extra_stats.info.setup_time
+                    blolayer.backward_solve_time = stats.extra_stats.info.solve_time
+                blolayer.backward_num_iters = stats.num_iters
+               
 
                 st = blolayer.perturbed_problem.status
                 try:
@@ -503,9 +554,10 @@ def _BLOLayerFn(
                 for c_id, c in enumerate(blolayer.active_eq_constraints):
                     if c.dual_value.any() == None:
                         print(f"active inequality constraint {c_id} dual value is None")
-                    # active_mask = np.array([a.value for a in blolayer.active_mask_params])
+                    active_mask = np.array([a.value for a in blolayer.active_mask_params])
                     new_active_dual[c_id][i, ...] = c.dual_value
             
+            blolayer.time_backward_optimization = avg_time #/B
             # print('--- sol_diff mean: ', np.mean(np.array(sol_diffs)), 'max: ', np.max(np.array(sol_diffs)), 'min: ', np.min(np.array(sol_diffs)))
 
             new_sol = [to_torch(v, ctx.dtype, ctx.device) for v in new_sol_lagrangian]
@@ -550,8 +602,12 @@ def _BLOLayerFn(
             if ctx.device != torch.device('cpu'):
                 torch.set_default_device(torch.device(ctx.device))
             loss = 0.0
+            
+            avg_time = 0
             with torch.enable_grad():
                 for i in range(B):
+                    start_time = time.time()
+                    
                     vars_new_i = [v[i] for v in new_sol]
                     vars_old_i = [to_torch(sol_numpy[j][i], ctx.dtype, ctx.device) for j in range(len(blolayer.variables))]
                     
@@ -565,11 +621,17 @@ def _BLOLayerFn(
                     phi_new_i = blolayer.phi_torch(*vars_new_i, *params_i, *new_eq_dual_i, *new_ineq_dual_i)
                     phi_old_i = blolayer.phi_torch(*vars_old_i, *params_i, *old_eq_dual_i, *old_ineq_dual_i)
                     loss +=  phi_new_i - phi_old_i
+                    
+                    avg_time += time.time() - start_time
+                
+                blolayer.time_pre_autograd = avg_time #/B
 
                 loss = blolayer.alpha * loss
 
+            start_time = time.time()
             loss.backward()
             grads = [p.grad for p in params_req]
+            blolayer.time_autograd = time.time() - start_time
 
             if _compute_cos_sim:
                 with torch.no_grad():

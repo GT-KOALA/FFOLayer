@@ -1,15 +1,17 @@
 #!/bin/bash
 
 batchSize=1
-epochs=1
+epochs=10
+
+python synthetic_task/main_synthetic.py --batch_size=$batchSize --epochs=$epochs --method=ffocp_eq --learn_constraint=0 --suffix=_not_learnable_1 --ydim=24
 
 # python synthetic_task/main_synthetic.py --batch_size=$batchSize --epochs=$epochs --method=ffocp_eq --learn_constraint=0 --suffix=_not_learnable_1 --ydim=10
 # python synthetic_task/main_synthetic.py --batch_size=$batchSize --epochs=$epochs --method=qpth --learn_constraint=0 --suffix=_not_learnable_1 --ydim=10
 # python synthetic_task/main_synthetic.py --batch_size=$batchSize --epochs=$epochs --method=ffoqp_eq_schur --learn_constraint=0 --suffix=_not_learnable_1 --ydim=10
 
-python synthetic_task/main_synthetic.py --batch_size=$batchSize --epochs=$epochs --method=ffocp_eq --learn_constraint=0 --suffix=_not_learnable_1 --ydim=500
-python synthetic_task/main_synthetic.py --batch_size=$batchSize --epochs=$epochs --method=qpth --learn_constraint=0 --suffix=_not_learnable_1 --ydim=500
-python synthetic_task/main_synthetic.py --batch_size=$batchSize --epochs=$epochs --method=ffoqp_eq_schur --learn_constraint=0 --suffix=_not_learnable_1 --ydim=500
+# python synthetic_task/main_synthetic.py --batch_size=$batchSize --epochs=$epochs --method=ffocp_eq --learn_constraint=0 --suffix=_not_learnable_1 --ydim=200
+# python synthetic_task/main_synthetic.py --batch_size=$batchSize --epochs=$epochs --method=qpth --learn_constraint=0 --suffix=_not_learnable_1 --ydim=500
+# python synthetic_task/main_synthetic.py --batch_size=$batchSize --epochs=$epochs --method=ffoqp_eq_schur --learn_constraint=0 --suffix=_not_learnable_1 --ydim=500
 
 # python synthetic_task/main_synthetic.py --batch_size=$batchSize --epochs=$epochs --method=ffocp_eq --learn_constraint=0 --suffix=_not_learnable_1 --ydim=1000
 # python synthetic_task/main_synthetic.py --batch_size=$batchSize --epochs=$epochs --method=qpth --learn_constraint=0 --suffix=_not_learnable_1 --ydim=1000

@@ -9,7 +9,7 @@ sns.set_theme(style="whitegrid", context="talk")
 palette = sns.color_palette()
 
 batch_size = 1
-BASE_DIR = f"../synthetic_results_{batch_size}_compare_SCS_OSQP_dim24"
+BASE_DIR = f"../sudoku_results_{batch_size}"
 METHODS = [
     # "qpth",
     # "ffoqp_eq_schur",
@@ -31,12 +31,14 @@ def load_results(base_dir=BASE_DIR, methods=METHODS):
                 return cast(mo.group(1)) if mo else np.nan
 
             df["seed"] = grab(r"_seed(\d+)", int)
-            df["ydim"] = grab(r"ydim(\d+)", int)
+            df["n"] = grab(r"n(\d+)", int)
             df["lr"]   = grab(r"lr([0-9eE\.\-]+)", float)
-            # df["eps"]  = grab(r"eps([0-9eE\.\-]+)", float)
-
+            #df["eps"]  = grab(r"eps([0-9eE\.\-]+)", float)
             dfs.append(df)
-
+        
+        print("method: ", m)
+        # print(df)
+        
     if not dfs:
         raise FileNotFoundError(f"No CSVs found under {base_dir}.")
     return pd.concat(dfs, ignore_index=True, sort=False)
@@ -47,45 +49,6 @@ df = df.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
 # for c in ["epoch","test_ts_loss","test_df_loss","forward_time","backward_time"]:
 #     if c not in df.columns:
 #         df[c] = np.nan
-
-def plot_time_vs_ydim(df):
-    
-    print("Columns:", df.columns.tolist())
-    print(df.head())
-    # === 2. Compute averages over epochs and seeds ===
-    df['total_time'] = df['forward_time'] + df['backward_time']
-    grouped = (
-        df.groupby(['method', 'ydim'], as_index=False)
-        .agg({'forward_time': 'mean', 'backward_time': 'mean', 'total_time': 'mean'})
-    )
-
-    # === 3. Plot ===
-    metrics = ['forward_time', 'backward_time', 'total_time']
-    titles = ['Forward Time', 'Backward Time', 'Total Time']
-
-    plt.figure(figsize=(8, 6))
-
-    colors = {
-        'qpth': 'tab:blue',
-        'ffoqp_eq_schur': 'tab:orange',
-        'ffocp_eq': 'tab:green'
-    }
-
-    for i, metric in enumerate(metrics, start=1):
-        plt.subplot(3, 1, i)
-        for method, color in colors.items():
-            subset = grouped[grouped['method'] == method].sort_values('ydim')
-            plt.plot(subset['ydim'], subset[metric], marker='o', label=method, color=color)
-        plt.title(titles[i-1])
-        plt.xlabel("ydim")
-        plt.ylabel("Average Time")
-        plt.grid(True)
-        if i == 1:
-            plt.legend()
-
-    plt.tight_layout()
-    plt.savefig(f"{BASE_DIR}/average_times_vs_ydim.png", dpi=300, bbox_inches="tight")
-    plt.close()
     
 def plot_time_vs_method(df):
     df_avg_method = df.groupby('method')[['forward_time', 'backward_time']].mean().reset_index()
@@ -141,7 +104,7 @@ def plot_total_time_vs_method(df):
     plt.savefig(f"{BASE_DIR}/total_time_vs_method.png", dpi=300, bbox_inches='tight')
     plt.close()
     
-def plot_losse_vs_epoch(df, loss_metric_name='train_df_loss'):
+def plot_losse_vs_epoch(df, loss_metric_name):
     df_avg_epoch = df.groupby(['method', 'epoch'])[[loss_metric_name]].mean().reset_index()
 
     # --- Forward Time Figure ---
@@ -149,7 +112,7 @@ def plot_losse_vs_epoch(df, loss_metric_name='train_df_loss'):
     sns.lineplot(data=df_avg_epoch, x='epoch', y=loss_metric_name, hue='method', marker='o', dashes=False)
     plt.ylabel("loss")
     plt.title("Loss vs Epoch")
-    plt.savefig(f"{BASE_DIR}/loss_vs_epoch.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{BASE_DIR}/{loss_metric_name}_vs_epoch.png", dpi=300, bbox_inches='tight')
     plt.close()
         
     
@@ -157,4 +120,5 @@ def plot_losse_vs_epoch(df, loss_metric_name='train_df_loss'):
 plot_time_vs_method(df)
 plot_time_vs_epoch(df)
 plot_total_time_vs_method(df)
-plot_losse_vs_epoch(df)
+plot_losse_vs_epoch(df, "train_loss")
+plot_losse_vs_epoch(df, "train_error")

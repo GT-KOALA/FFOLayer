@@ -78,11 +78,28 @@ if __name__ == '__main__':
 
     if not os.path.exists(directory):
         os.makedirs(directory)
+        
+        
+    if method=="ffocp_eq":
+        timing_directory = '../synthetic_results_{}{}/{}_debug_timing/'.format(args.batch_size, args.suffix, method)
+        timing_filename = '{}_ydim{}_lr{}_seed{}.csv'.format(method, ydim, learning_rate, seed)
+        if os.path.exists(timing_directory + timing_filename):
+            os.remove(timing_directory + timing_filename)
+
+        if not os.path.exists(timing_directory):
+            os.makedirs(timing_directory)
+            
+        with open(timing_directory + timing_filename, 'w') as timing_file:
+            timing_file.write('epoch, forward_time, backward_time, forward_opt_time, backward_opt_time, forward_num_iters, backward_num_iters, forward_setup_time, backward_setup_time, forward_solve_time, backward_solve_time, pre_autograd_time, autograd_time\n')
+            timing_file.flush()
 
     
     
     ts_weight = 0
     norm_weight = 0
+    
+    experiment_start_time = 0
+    
     with open(directory + filename, 'w') as file:
         file.write('epoch, train_ts_loss, test_ts_loss, train_df_loss, test_df_loss, forward_time, backward_time\n')
         file.flush()
@@ -94,11 +111,22 @@ if __name__ == '__main__':
             train_df_loss_list, test_df_loss_list = [], []
             forward_time = 0
             backward_time = 0
+            
+            forward_optimization_time = 0
+            backward_optimization_time = 0
+            pre_autograd_time = 0
+            autograd_time = 0
+            
+            forward_solve_time = 0
+            backward_solve_time = 0
+            forward_setup_time = 0
+            backward_setup_time = 0
 
             model.train()
             for i, (x, y) in enumerate(train_loader):
                 if i%10==0:
-                    print(f"\t\t train example: {i}/{len(train_loader)}")
+                    time_elapsed = experiment_start_time - time.time()
+                    print(f"\t\t train example: {i}/{len(train_loader)}, time elpased:{time_elapsed/60} minutes")
                 
                 iter_start_time = time.time()
                 
@@ -110,13 +138,51 @@ if __name__ == '__main__':
                 df_loss = torch.mean(y * z)
                 loss = df_loss + ts_loss * ts_weight + torch.norm(z) * norm_weight
                 
-                forward_time += time.time() - start_time
+                forward_time_ = time.time() - start_time
+                forward_time += forward_time_
 
                 start_time = time.time()
                 loss.backward()
-                backward_time += time.time() - start_time
+                backward_time_ = time.time() - start_time
+                backward_time += backward_time_
                 
                 iter_time = time.time() - iter_start_time
+                
+                
+                ##### more timing measurements optionally
+                if method=="ffocp_eq":
+                    if i%(len(train_loader)//2)==0:
+                        forward_optimization_time_ = model.optlayer.time_forward_optimization
+                        backward_optimization_time_ = model.optlayer.time_backward_optimization
+                        pre_autograd_time_ = model.optlayer.time_pre_autograd
+                        autograd_time_ = model.optlayer.time_autograd
+                        
+                        forward_num_iters = model.optlayer.forward_num_iters
+                        forward_lin_sys_time = model.optlayer.forward_lin_sys_time
+                        backward_num_iters = model.optlayer.backward_num_iters
+                        backward_lin_sys_time = model.optlayer.backward_lin_sys_time
+                        
+                        forward_solve_time_ = model.optlayer.forward_solve_time
+                        backward_solve_time_ = model.optlayer.backward_solve_time
+                        forward_setup_time_ = model.optlayer.forward_setup_time
+                        backward_setup_time_ = model.optlayer.backward_setup_time
+                        
+                        forward_optimization_time += forward_optimization_time_
+                        backward_optimization_time += backward_optimization_time_
+                        pre_autograd_time += pre_autograd_time_
+                        autograd_time += autograd_time_
+                        
+                        forward_solve_time += forward_solve_time_
+                        backward_solve_time += backward_solve_time_
+                        forward_setup_time += forward_setup_time_
+                        backward_setup_time += backward_setup_time_
+                        
+                        
+                        if method=="ffocp_eq":
+                            with open(timing_directory + timing_filename, 'a') as timing_file:
+                                timing_file.write(f'{epoch},{forward_time_},{backward_time_},{forward_optimization_time_},{backward_optimization_time_},{forward_num_iters},{backward_num_iters},{forward_setup_time_},{backward_setup_time_},{forward_solve_time_},{backward_solve_time_},{pre_autograd_time_},{autograd_time_}\n')
+                                timing_file.flush()  
+
 
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
                 #if epoch > 0:
@@ -127,7 +193,12 @@ if __name__ == '__main__':
                 train_ts_loss_list.append(ts_loss.item())
                 train_df_loss_list.append(df_loss.item())
                 
+                
                 print(f"train loss: {loss.item()}, iter time: {iter_time}")
+                
+                if method=="ffocp_eq":
+                    print(f"forward_opt_time: {forward_optimization_time_}, backward_opt_time: {backward_optimization_time_}")
+                    print(f"forward_num_iters: {forward_num_iters}, backward_num_iters: {backward_num_iters}")
 
             print('Forward time {}, backward time {}'.format(forward_time, backward_time))
 
@@ -172,6 +243,12 @@ if __name__ == '__main__':
 
             file.write('{},{},{},{},{},{},{}\n'.format(epoch, train_ts_loss, test_ts_loss, train_df_loss, test_df_loss, forward_time, backward_time))
             file.flush()
+            
+            # if method=="ffocp_eq":
+            #     with open(timing_directory + timing_filename, 'a') as timing_file:
+            #         timing_file.write('{},{},{},{},{},{},{}\n'.format(epoch, forward_time, backward_time, forward_optimization_time, backward_optimization_time, pre_autograd_time, autograd_time))
+            #         timing_file.flush()  
+            
             writer.flush()
             
         file.close()

@@ -11,7 +11,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 
-from ffocp_eq import BLOLayer
+from ffocp_eq_timing import BLOLayer
 from ffocp_eq_multithread import BLOLayer as BLOLayerMT
 
 from qpthlocal.qp import QPFunction
@@ -41,9 +41,9 @@ class MLP(nn.Module):
     def forward(self, x):
         x = x.view(-1, self.input_dim)
         # x = self.activation(self.fc1(x)) ###SHING HEI: removed batch norm for batch size 1
-        x = self.activation((self.fc1(x)))
+        x = self.activation(self.batch_norm1(self.fc1(x)))
         # x = self.activation(self.fc2(x))
-        x = self.activation((self.fc2(x)))
+        x = self.activation(self.batch_norm2(self.fc2(x)))
         x = torch.clamp(self.fc3(x), min=-self.bound, max=self.bound)
         return x
     
@@ -138,7 +138,7 @@ class OptModel(nn.Module):
             multithread = False
             if layer_type==FFOCP_EQ:
                 if not multithread:
-                    self.optlayer = BLOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12)
+                    self.optlayer = BLOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, solver_name="SCS")
                 else:
                     problem_list = []
                     params_list = []
