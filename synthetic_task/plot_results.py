@@ -27,8 +27,8 @@ def load_results(base_dir=BASE_DIR, methods=METHODS):
         pattern = os.path.join(base_dir, m, "*.csv")
         for fp in sorted(glob.glob(pattern)):
             df = pd.read_csv(fp)
-            if m=="ffocp_eq_schur_steps" or m=="ffocp_eq_schur":
-                m = "ffocp_eq"
+            if m=="ffoqp_eq_schur_steps" or m=="ffoqp_eq_schur":
+                m = "ffoqp_eq"
             df["method"] = m.removesuffix("_steps")
 
             fname = os.path.basename(fp)

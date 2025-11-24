@@ -4,7 +4,7 @@
 #SBATCH -N 1 --ntasks-per-node=1         # number of nodes and cores per node required
 #SBATCH --array=1-50                      # run 1 jobs with seeds 1
 #SBATCH --mem-per-cpu=16G                 # memory per core
-#SBATCH -t 360                           # duration of the job
+#SBATCH -t 480                           # duration of the job
 #SBATCH --output=/nethome/sho73/bilevel-layer_package/sudoku_sbatch_output/%j.out
 
 

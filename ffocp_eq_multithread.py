@@ -198,21 +198,56 @@ class _BLOLayer(torch.nn.Module):
         self.ineq_dual_params_list = [[cp.Parameter(shape=f.shape) for f in ineq_functions] for ineq_functions in ineq_functions_list]
         self.active_mask_params_list = [[cp.Parameter(shape=f.shape) for f in ineq_functions] for ineq_functions in ineq_functions_list]
 
+        ######### original that is not dpp (parameter * parameter)
+        # vars_dvars_product_list = [cp.sum([cp.sum(cp.multiply(dv, v))
+        #                             for dv, v in zip(self.dvar_params_list[i], variables_list[i])]) for i in range(num_batch)]
+        # ineq_dual_product_list = [cp.sum([cp.sum(cp.multiply(lm, g))
+        #                             for lm, g in zip(self.ineq_dual_params_list[i], ineq_functions_list[i])]) for i in range(num_batch)]
+
+        # self.new_objective_list = [(1/self.alpha) * vars_dvars_product_list[i] + objective_list[i] + ineq_dual_product_list[i] for i in range(num_batch)]
+        # self.active_eq_constraints_list = [[
+        #     cp.multiply(self.active_mask_params_list[i][j], ineq_functions[j]) == 0
+        #     for j in range(len(ineq_functions))
+        # ] for i, ineq_functions in enumerate(ineq_functions_list)]
+         
+        # self.perturbed_problem_list = [cp.Problem(cp.Minimize(self.new_objective_list[i]),
+        #                                 self.eq_constraints_list[i] + self.active_eq_constraints_list[i]) for i in range(num_batch)]
+
+        ######### new that is dpp (parameter*variable)
+        ineq_vals_list = [[cp.Variable(shape=g.shape, name=f"ineq_val_{k}_{i}")
+            for k, g in enumerate(self.ineq_functions_list[i])] for i in range(num_batch)]
+        
+        link_constraint_list = []
+        for i in range(num_batch):
+            link_constraints = []
+            for z, g in zip(ineq_vals_list[i], self.ineq_functions_list[i]):
+                link_constraints.append(z == g)
+            link_constraint_list.append(link_constraints)
+            
         vars_dvars_product_list = [cp.sum([cp.sum(cp.multiply(dv, v))
                                     for dv, v in zip(self.dvar_params_list[i], variables_list[i])]) for i in range(num_batch)]
+        
         ineq_dual_product_list = [cp.sum([cp.sum(cp.multiply(lm, g))
-                                    for lm, g in zip(self.ineq_dual_params_list[i], ineq_functions_list[i])]) for i in range(num_batch)]
+                                    for lm, g in zip(self.ineq_dual_params_list[i], ineq_vals_list[i])]) for i in range(num_batch)]
 
         self.new_objective_list = [(1/self.alpha) * vars_dvars_product_list[i] + objective_list[i] + ineq_dual_product_list[i] for i in range(num_batch)]
+        
         self.active_eq_constraints_list = [[
-            cp.multiply(self.active_mask_params_list[i][j], ineq_functions[j]) == 0
-            for j in range(len(ineq_functions))
-        ] for i, ineq_functions in enumerate(ineq_functions_list)]
-        
-        
+            cp.multiply(self.active_mask_params_list[i][j], ineq_vals[j]) == 0
+            for j in range(len(ineq_vals))
+        ] for i, ineq_vals in enumerate(ineq_vals_list)]
+         
         self.perturbed_problem_list = [cp.Problem(cp.Minimize(self.new_objective_list[i]),
-                                        self.eq_constraints_list[i] + self.active_eq_constraints_list[i]) for i in range(num_batch)]
+                                        self.eq_constraints_list[i] + self.active_eq_constraints_list[i] + link_constraint_list[i]) for i in range(num_batch)]
 
+        print("new_objective DPP?", self.new_objective_list[0].is_dcp(dpp=True))
+        print("vars_dvars_product DPP?", vars_dvars_product_list[0].is_dcp(dpp=True))
+        print("active eq constraint DPP?", self.active_eq_constraints_list[0][0].is_dcp(dpp=True))
+        print("ineq_dual_product DPP?", ineq_dual_product_list[0].is_dcp(dpp=True))
+        # assert(1==0)
+
+        
+        
         self.phi_torch_list = []
         for i in range(num_batch):
             objective = self.objective_list[i]
