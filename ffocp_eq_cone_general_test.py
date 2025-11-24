@@ -5,59 +5,40 @@ import time
 import os
 
 from cvxpylayers.torch import CvxpyLayer
-from ffocp_eq_cone_general import BLOLayer
+from ffocp_eq_cone_general_dpp import BLOLayer
+
+def random_problem(n, m, k, margin=0.1, scale=0.1):
+    Q = torch.eye(n)
+
+    q = (scale * torch.randn(n)).requires_grad_()
+
+    x_star = torch.randn(n)
+
+    A_list, b_list, c_list, d_list = [], [], [], []
+    for _ in range(m):
+        A = scale * torch.randn(k, n)
+        b = scale * torch.randn(k)
+        c = scale * torch.randn(n)
+
+        left = torch.linalg.norm(A @ x_star + b)      # ||A x* + b||
+        right_base = torch.dot(c, x_star)             # c^T x*
+
+        d_val = (left - right_base + margin).item()
+
+        A_list.append(A)
+        b_list.append(b)
+        c_list.append(c)
+        d_list.append(torch.tensor(d_val))
+    return Q, q, A_list, b_list, c_list, d_list
 
 
 def test_soc_blolayer_vs_cvxpy(seed=0):
     torch.manual_seed(seed)
 
-    n = 50
-    m = 2
-    k = 2
-
-    Q = torch.eye(n)
-    q = torch.rand(n, requires_grad=True)
-
-    A_list = [torch.randn(k, n) for _ in range(m)]
-    b_list = [torch.randn(k)     for _ in range(m)]
-    c_list = [torch.randn(n)     for _ in range(m)]
-    d_list = [torch.randn(1)     for _ in range(m)]
-
-    # num_active = 5
-    # margin = 1.0
-
-    # x_target = torch.randn(n)
-
-    # Q = torch.eye(n)
-    # q = -x_target.clone()
-    # q.requires_grad_(True)
-
-    # A_list, b_list, c_list, d_list = [], [], [], []
-
-    # for i in range(m):
-    #     A_i = torch.randn(k, n)
-    #     b_i = torch.randn(k)
-
-    #     y_i = A_i @ x_target + b_i
-    #     lhs_i = torch.norm(y_i)
-
-    #     c_i = torch.zeros(n)
-
-    #     if i < num_active:
-    #         d_i = lhs_i
-    #     else:
-    #         d_i = lhs_i + margin
-
-    #     A_list.append(A_i)
-    #     b_list.append(b_i)
-    #     c_list.append(c_i)
-    #     d_list.append(d_i.view(1))
-
-    # F = torch.randn(p, n)
-    # g = torch.randn(p)
-
-    optimizer = torch.optim.SGD([q], lr=0.1)
-
+    n = 900
+    m = 1000
+    k = 1
+    
     x_cp = cp.Variable(n)
 
     Q_cp = cp.Parameter((n, n), PSD=True)
@@ -90,59 +71,77 @@ def test_soc_blolayer_vs_cvxpy(seed=0):
     cvx_layer = CvxpyLayer(problem, parameters=params_cp, variables=[x_cp])
     blolayer = BLOLayer(problem, parameters=params_cp, variables=[x_cp])
 
-    params_torch = [Q, q] + A_list + b_list + c_list + d_list
-
     cpu_threads = os.cpu_count()
-    repeat_times = 3
-
+    repeat_times = 20
+    
+    Q, q, A_list, b_list, c_list, d_list = random_problem(n, m, k)
+    params_torch = [Q, q] + A_list + b_list + c_list + d_list
+    optimizer = torch.optim.SGD([q], lr=0.1)
     with torch.no_grad():
         start_time = time.time()
-        sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.GUROBI, "Threads": cpu_threads})
+        # sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.GUROBI, "Threads": cpu_threads})
+        # sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.SCS, "max_iters": 2000, "eps": 1e-3, "warm_start": True})
+        # sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.MOSEK})
 
-        # sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.SCS, "max_iters": 1000, "eps": 1e-4})
+        sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.SCS, "max_iters": 1000, "eps": 1e-4})
         print(f"BLOLayer forward time with no grad: {time.time() - start_time}")
 
-    total_time = time.time()
+    blo_total_fw_time = []
+    cvx_total_fw_time = []
+    blo_total_bw_time = []
+    cvx_total_bw_time = []
     for _ in range(repeat_times):
-        start_time = time.time()
+        Q, q, A_list, b_list, c_list, d_list = random_problem(n, m, k)
+        params_torch = [Q, q] + A_list + b_list + c_list + d_list
+        optimizer = torch.optim.SGD([q], lr=0.1)
+
+        blo_forward_start_time = time.time()
         # sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.GUROBI, "Threads": cpu_threads, "BarConvTol": 1e-4, "FeasibilityTol": 1e-6, "OptimalityTol": 1e-6})
-        sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.GUROBI, "Threads": cpu_threads})
+        # sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.GUROBI, "Threads": cpu_threads})
         # sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.MOSEK, "mosek_params": {'MSK_DPAR_OPTIMIZER_MAX_TIME':  1, }})
         # sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.MOSEK})
-        # sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.SCS, "max_iters": 2000, "eps": 1e-4})
-        end_time = time.time()
-        print(f"BLOLayer forward time: {end_time - start_time}")
+        sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.SCS, "max_iters": 2000, "eps": 1e-2, "warm_start": True})
+        blo_forward_end_time = time.time()
+        print(f"BLOLayer forward time: {blo_forward_end_time - blo_forward_start_time}")
 
-        start_time = time.time()
         loss_blo = sol_blo.sum()
+        blo_loss_backward_start_time = time.time()
         loss_blo.backward()
-        end_time = time.time()
-        print(f"BLOLayer loss backward time: {end_time - start_time}")
+        blo_loss_backward_end_time = time.time()
+        print(f"BLOLayer loss backward time: {blo_loss_backward_end_time - blo_loss_backward_start_time}")
 
         grad_blo = q.grad.detach().clone()
         optimizer.zero_grad()
 
-        # print("BLOLayer gradient:", grad_blo)
-    print(f"BLOLayer total time: {time.time() - total_time}")
+        blo_total_fw_time.append(blo_forward_end_time - blo_forward_start_time)
+        blo_total_bw_time.append(blo_loss_backward_end_time - blo_loss_backward_start_time)
+        
+        cvx_forward_start_time = time.time()
+        sol_cvx, = cvx_layer(*params_torch, solver_args={"eps": 1e-10})
+        cvx_forward_end_time = time.time()
+        print(f"CvxpyLayer forward time: {cvx_forward_end_time - cvx_forward_start_time}")
 
-    total_time = time.time()
-    for _ in range(repeat_times):
-        start_time = time.time()
-        sol_cvx, = cvx_layer(*params_torch)
-        end_time = time.time()
-        print(f"CvxpyLayer forward time: {end_time - start_time}")
-
-        start_time = time.time()
         loss_cvx = sol_cvx.sum()
+        cvx_loss_backward_start_time = time.time()
         loss_cvx.backward()
-        end_time = time.time()
-        print(f"CvxpyLayer loss backward time: {end_time - start_time}")
+        cvx_loss_backward_end_time = time.time()
+        print(f"CvxpyLayer loss backward time: {cvx_loss_backward_end_time - cvx_loss_backward_start_time}")
 
         grad_cvx = q.grad.detach().clone()
         optimizer.zero_grad()
 
         # print("CvxpyLayer gradient:", grad_cvx)
-    print(f"CvxpyLayer total time: {time.time() - total_time}")
+        cvx_total_fw_time.append(cvx_forward_end_time - cvx_forward_start_time)
+        cvx_total_bw_time.append(cvx_loss_backward_end_time - cvx_loss_backward_start_time)
+    print(f"BLOLayer total forward time: {blo_total_fw_time}")
+    print(f"BLOLayer total backward time: {blo_total_bw_time}")
+    print(f"CvxpyLayer total forward time: {cvx_total_fw_time}")
+    print(f"CvxpyLayer total backward time: {cvx_total_bw_time}")
+    print(f"--------------------------------")
+    print(f"BLOLayer mean forward time: {np.mean(blo_total_fw_time[1:])}")
+    print(f"BLOLayer mean backward time: {np.mean(blo_total_bw_time[1:])}")
+    print(f"CvxpyLayer mean forward time: {np.mean(cvx_total_fw_time[1:])}")
+    print(f"CvxpyLayer mean backward time: {np.mean(cvx_total_bw_time[1:])}")
 
     est = grad_blo.reshape(-1)
     gt  = grad_cvx.reshape(-1)
@@ -157,5 +156,5 @@ def test_soc_blolayer_vs_cvxpy(seed=0):
 
 
 if __name__ == "__main__":
-    for seed in range(2):
+    for seed in range(1):
         test_soc_blolayer_vs_cvxpy(seed)

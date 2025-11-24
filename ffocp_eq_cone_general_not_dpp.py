@@ -226,11 +226,18 @@ class _BLOLayer(torch.nn.Module):
 
         self.active_eq_constraints = []
 
-        # 1) scalar：mask ⊙ g(x) == 0
+        print("new_objective DPP?", self.new_objective.is_dcp(dpp=True))
+
+        print("vars_dvars_product DPP?", vars_dvars_product.is_dcp(dpp=True))
+        # print("scalar_ineq_dual_product DPP?", scalar_ineq_dual_product.is_dcp(dpp=True))
+        print("cone_dual_product DPP?", cone_dual_product.is_dcp(dpp=True))
+
+        # 1) scalar：mask * g(x) == 0
         for j, g in enumerate(self.scalar_ineq_functions):
             self.active_eq_constraints.append(
                 cp.multiply(self.scalar_active_mask_params[j], g) == 0
             )
+            print("active_eq_constraints[j] DPP?", self.active_eq_constraints[j].is_dcp(dpp=True))
         # 2) cone：mask * <dual, g(x)-g*> == 0
         for j, g in enumerate(self.cone_exprs):
             dual_param = self.cone_dual_params[j]
@@ -239,6 +246,7 @@ class _BLOLayer(torch.nn.Module):
             self.active_eq_constraints.append(
                 self.cone_active_mask[j] * lin == 0
             )
+            print("active_eq_constraints[j] DPP?", self.active_eq_constraints[j].is_dcp(dpp=True))
 
         self.perturbed_problem = cp.Problem(
             cp.Minimize(self.new_objective),
@@ -442,6 +450,7 @@ def _BLOLayerFn(
                 print(f"Forward solve time: {blolayer.problem.solver_stats.solve_time}")
                 print(f"Forward num iters: {blolayer.problem.solver_stats.num_iters}")
                 
+                assert blolayer.problem.status in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE)
                 # primal
                 for v_id, v in enumerate(blolayer.variables):
                     sol_numpy[v_id][i, ...] = v.value
@@ -616,14 +625,14 @@ def _BLOLayerFn(
                 for j, v in enumerate(blolayer.variables):
                     blolayer.dvar_params[j].value = dvars_numpy[j][i]
                     # Warm start
-                #     v.value = ctx._warm_vars[j]
+                    v.value = ctx._warm_vars[j]
 
-                # for j, c in enumerate(blolayer.eq_constraints):
-                #     if c.dual_value is None and ctx._warm_eq_duals[j] is not None:
-                #         c.dual_value = ctx._warm_eq_duals[j]
-                # for j, c in enumerate(blolayer.scalar_ineq_constraints):
-                #     if c.dual_value is None and ctx._warm_ineq_duals[j] is not None:
-                #         c.dual_value = ctx._warm_ineq_duals[j]
+                for j, c in enumerate(blolayer.eq_constraints):
+                    if c.dual_value is None and ctx._warm_eq_duals[j] is not None:
+                        c.dual_value = ctx._warm_eq_duals[j]
+                for j, c in enumerate(blolayer.scalar_ineq_constraints):
+                    if c.dual_value is None and ctx._warm_ineq_duals[j] is not None:
+                        c.dual_value = ctx._warm_ineq_duals[j]
 
                 for j, _ in enumerate(blolayer.scalar_ineq_functions):
                     lam = scalar_ineq_dual[j][i]
@@ -640,6 +649,7 @@ def _BLOLayerFn(
                         mask = mask_flat.reshape(lam.shape)
                     blolayer.scalar_active_mask_params[j].value = mask
 
+                _num_active_cones = 0
                 for j, _ in enumerate(blolayer.cone_exprs):
                     g_star = ctx.cone_primal_vals[j][i, ...]   # g(x*)
                     y_star = ctx.cone_dual_vals[j][i, ...]     # dual
@@ -649,10 +659,13 @@ def _BLOLayerFn(
 
                     y_norm = float(np.linalg.norm(y_star.reshape(-1), ord=np.inf))
                     if y_norm > blolayer.dual_cutoff:
-                        # Constraint is active
+                        # Cone constraint is active
                         blolayer.cone_active_mask[j].value = 1.0
+                        _num_active_cones += 1
                     else:
                         blolayer.cone_active_mask[j].value = 0.0
+                    
+                print(f"Number of active cones: {_num_active_cones}")
 
                 for j, _ in enumerate(blolayer.eq_functions):
                     blolayer.eq_dual_params[j].value = eq_dual[j][i]
@@ -697,12 +710,12 @@ def _BLOLayerFn(
                         sol_diffs.append(sol_diff)
                 
                 for c_id, c in enumerate(blolayer.eq_constraints):
-                    if c.dual_value.any() == None:
-                        print(f"equality constraint {c_id} dual value is None")
+                    # if c.dual_value.any() == None:
+                    #     print(f"equality constraint {c_id} dual value is None")
                     new_eq_dual[c_id][i, ...] = c.dual_value
                 for c_id, c in enumerate(blolayer.active_eq_constraints):
-                    if c.dual_value.any() == None:
-                        print(f"active inequality constraint {c_id} dual value is None")
+                    # if c.dual_value.any() == None:
+                    #     print(f"active inequality constraint {c_id} dual value is None")
                     # active_mask = np.array([a.value for a in blolayer.active_mask_params])
                     new_active_dual[c_id][i, ...] = c.dual_value
                 for j in range(num_scalar_ineq):
@@ -777,8 +790,20 @@ def _BLOLayerFn(
 
                 loss = blolayer.alpha * loss
 
-            loss.backward()
-            grads = [p.grad for p in params_req]
+            # loss.backward()
+            # grads = [p.grad for p in params_req]
+
+            grads_req = torch.autograd.grad(
+                outputs=loss,
+                inputs=[q for q, need in zip(params_req, req_grad_mask) if need],
+                allow_unused=True,
+                retain_graph=False,
+            )
+
+            grads = []
+            it = iter(grads_req)
+            for need in req_grad_mask:
+                grads.append(next(it) if need else None)
             time_autograd = time.time() - start_time
             print(f"BLOLayer autograd time: {time_autograd}")
 
