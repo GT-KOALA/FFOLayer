@@ -214,11 +214,13 @@ class _BLOLayer(torch.nn.Module):
         elif solver_args.get("solver") == cp.SCS:
             default_solver_args = dict(
                 solver=cp.SCS,
-                warm_start=False,
+                warm_start=True,
                 ignore_dpp=True,
                 max_iters=2500,
                 eps=self.eps,
             )
+        elif solver_args.get("solver")==cp.GUROBI:
+            default_solver_args = dict(solver=cp.GUROBI, ignore_dpp=True, warm_start=False, **{"Threads": n_threads, "OutputFlag": 0})
         else:
             default_solver_args = {"ignore_dpp": True}
         solver_args = {**default_solver_args, **solver_args}

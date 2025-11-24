@@ -14,7 +14,7 @@ from utils_sudoku import computeErr, create_logger, decode_onehot
 import logger as logger
 import wandb
 
-def train_test_loop(args, experiment_dir, n):
+def train_test_loop(args, experiment_dir, step_experiment_dir, n):
     method = args.method
     seed = args.seed
     num_epochs = args.epochs
@@ -82,6 +82,17 @@ def train_test_loop(args, experiment_dir, n):
 
     if not os.path.exists(directory):
         os.makedirs(directory)
+    
+    ### record step wise statistics
+    if os.path.exists(step_experiment_dir + filename):
+        os.remove(step_experiment_dir + filename)
+
+    if not os.path.exists(step_experiment_dir):
+        os.makedirs(step_experiment_dir)
+        
+    with open(step_experiment_dir + filename, 'w') as step_file:
+        step_file.write('iter, train_loss, iter_forward_time, iter_backward_time, train_error, accum_forward_time, accum_backward_time\n')
+        step_file.flush()
         
     start_epoch = 0
 
@@ -197,12 +208,19 @@ def train_test_loop(args, experiment_dir, n):
 
                 train_loss_list.append(loss.item())
                 print(f"train loss: {loss.item()}, iter time: {iter_forward_time + iter_backward_time}")
+                
+                
+                with open(step_experiment_dir + filename, 'a') as step_file:
+                    step_file.write(f'{i},{loss.item()},{iter_forward_time},{iter_backward_time},{train_err},{forward_time},{backward_time}\n')
+                    step_file.flush()
+                
+                
                 wandb.log({
                     "train_loss": loss.item(), "iter_time": iter_forward_time + iter_backward_time, "accumulated_backward_time": backward_time, "accumulated_forward_time": forward_time,
                     "iter_forward_time": iter_forward_time, "iter_backward_time": iter_backward_time,
                 })
 
-            if epoch%1==0 or epoch==num_epochs-1:
+            if epoch==num_epochs-1:
                     checkpoint = {
                         'model_state_dict': model.state_dict(),
                         'optimizer_state_dict': optimizer.state_dict(),
@@ -284,6 +302,10 @@ if __name__ == '__main__':
     
     experiment_dir = '../sudoku_results_{}/{}/'.format(args.batch_size, args.method)
     os.makedirs(experiment_dir, exist_ok=True)
+    
+    step_experiment_dir = '../sudoku_results_{}/{}/'.format(args.batch_size, f"{args.method}_steps")
+    os.makedirs(step_experiment_dir, exist_ok=True)
+    
     central_logger = create_logger(logging_root=experiment_dir, log_name="central_failures.log")
     
     n = args.n
@@ -296,7 +318,7 @@ if __name__ == '__main__':
     wandb.init(project=f"bilevel_layer_sudoku", name=f"sudoku_{time_str}", config=vars(args), dir=f"wandb/{args.method}")
     
     try:
-        train_test_loop(args, experiment_dir, n=n)
+        train_test_loop(args, experiment_dir, step_experiment_dir, n=n)
     except Exception as e:
         central_logger.exception(f"{failure_id}: An error occurred: {e}")
         print(f"{failure_id}: An error occurred: {e}")

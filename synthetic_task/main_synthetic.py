@@ -79,19 +79,28 @@ if __name__ == '__main__':
     if not os.path.exists(directory):
         os.makedirs(directory)
         
+    step_experiment_dir = '../synthetic_results_{}{}/{}_steps/'.format(args.batch_size, args.suffix, method)
+    if os.path.exists(step_experiment_dir + filename):
+        os.remove(step_experiment_dir + filename)
+    if not os.path.exists(step_experiment_dir):
+        os.makedirs(step_experiment_dir)
+    with open(step_experiment_dir + filename, 'w') as step_file:
+        step_file.write('epoch, iter, train_df_loss, iter_forward_time, iter_backward_time, forward_solve_time, backward_solve_time, forward_setup_time, backward_setup_time\n')
+        step_file.flush()
         
-    if method=="ffocp_eq":
-        timing_directory = '../synthetic_results_{}{}/{}_debug_timing/'.format(args.batch_size, args.suffix, method)
-        timing_filename = '{}_ydim{}_lr{}_seed{}.csv'.format(method, ydim, learning_rate, seed)
-        if os.path.exists(timing_directory + timing_filename):
-            os.remove(timing_directory + timing_filename)
+        
+    # if method=="ffocp_eq":
+    #     timing_directory = '../synthetic_results_{}{}/{}_debug_timing/'.format(args.batch_size, args.suffix, method)
+    #     timing_filename = '{}_ydim{}_lr{}_seed{}.csv'.format(method, ydim, learning_rate, seed)
+    #     if os.path.exists(timing_directory + timing_filename):
+    #         os.remove(timing_directory + timing_filename)
 
-        if not os.path.exists(timing_directory):
-            os.makedirs(timing_directory)
+    #     if not os.path.exists(timing_directory):
+    #         os.makedirs(timing_directory)
             
-        with open(timing_directory + timing_filename, 'w') as timing_file:
-            timing_file.write('epoch, forward_time, backward_time, forward_opt_time, backward_opt_time, forward_num_iters, backward_num_iters, forward_setup_time, backward_setup_time, forward_solve_time, backward_solve_time, pre_autograd_time, autograd_time\n')
-            timing_file.flush()
+    #     with open(timing_directory + timing_filename, 'w') as timing_file:
+    #         timing_file.write('epoch, forward_time, backward_time, forward_opt_time, backward_opt_time, forward_num_iters, backward_num_iters, forward_setup_time, backward_setup_time, forward_solve_time, backward_solve_time, pre_autograd_time, autograd_time\n')
+    #         timing_file.flush()
 
     
     
@@ -150,38 +159,65 @@ if __name__ == '__main__':
                 
                 
                 ##### more timing measurements optionally
+                # if method=="ffocp_eq":
+                #     if i%(len(train_loader)//2)==0:
+                #         forward_optimization_time_ = model.optlayer.time_forward_optimization
+                #         backward_optimization_time_ = model.optlayer.time_backward_optimization
+                #         pre_autograd_time_ = model.optlayer.time_pre_autograd
+                #         autograd_time_ = model.optlayer.time_autograd
+                        
+                #         forward_num_iters = model.optlayer.forward_num_iters
+                #         forward_lin_sys_time = model.optlayer.forward_lin_sys_time
+                #         backward_num_iters = model.optlayer.backward_num_iters
+                #         backward_lin_sys_time = model.optlayer.backward_lin_sys_time
+                        
+                #         forward_solve_time_ = model.optlayer.forward_solve_time
+                #         backward_solve_time_ = model.optlayer.backward_solve_time
+                #         forward_setup_time_ = model.optlayer.forward_setup_time
+                #         backward_setup_time_ = model.optlayer.backward_setup_time
+                        
+                #         forward_optimization_time += forward_optimization_time_
+                #         backward_optimization_time += backward_optimization_time_
+                #         pre_autograd_time += pre_autograd_time_
+                #         autograd_time += autograd_time_
+                        
+                #         forward_solve_time += forward_solve_time_
+                #         backward_solve_time += backward_solve_time_
+                #         forward_setup_time += forward_setup_time_
+                #         backward_setup_time += backward_setup_time_
+                        
+                        
+                #         if method=="ffocp_eq":
+                #             with open(timing_directory + timing_filename, 'a') as timing_file:
+                #                 timing_file.write(f'{epoch},{forward_time_},{backward_time_},{forward_optimization_time_},{backward_optimization_time_},{forward_num_iters},{backward_num_iters},{forward_setup_time_},{backward_setup_time_},{forward_solve_time_},{backward_solve_time_},{pre_autograd_time_},{autograd_time_}\n')
+                #                 timing_file.flush()
+                
                 if method=="ffocp_eq":
-                    if i%(len(train_loader)//2)==0:
-                        forward_optimization_time_ = model.optlayer.time_forward_optimization
-                        backward_optimization_time_ = model.optlayer.time_backward_optimization
-                        pre_autograd_time_ = model.optlayer.time_pre_autograd
-                        autograd_time_ = model.optlayer.time_autograd
-                        
-                        forward_num_iters = model.optlayer.forward_num_iters
-                        forward_lin_sys_time = model.optlayer.forward_lin_sys_time
-                        backward_num_iters = model.optlayer.backward_num_iters
-                        backward_lin_sys_time = model.optlayer.backward_lin_sys_time
-                        
-                        forward_solve_time_ = model.optlayer.forward_solve_time
-                        backward_solve_time_ = model.optlayer.backward_solve_time
-                        forward_setup_time_ = model.optlayer.forward_setup_time
-                        backward_setup_time_ = model.optlayer.backward_setup_time
-                        
-                        forward_optimization_time += forward_optimization_time_
-                        backward_optimization_time += backward_optimization_time_
-                        pre_autograd_time += pre_autograd_time_
-                        autograd_time += autograd_time_
-                        
-                        forward_solve_time += forward_solve_time_
-                        backward_solve_time += backward_solve_time_
-                        forward_setup_time += forward_setup_time_
-                        backward_setup_time += backward_setup_time_
-                        
-                        
-                        if method=="ffocp_eq":
-                            with open(timing_directory + timing_filename, 'a') as timing_file:
-                                timing_file.write(f'{epoch},{forward_time_},{backward_time_},{forward_optimization_time_},{backward_optimization_time_},{forward_num_iters},{backward_num_iters},{forward_setup_time_},{backward_setup_time_},{forward_solve_time_},{backward_solve_time_},{pre_autograd_time_},{autograd_time_}\n')
-                                timing_file.flush()  
+                    forward_solve_time_ = model.optlayer.forward_solve_time
+                    backward_solve_time_ = model.optlayer.backward_solve_time
+                    forward_setup_time_ = model.optlayer.forward_setup_time
+                    backward_setup_time_ = model.optlayer.backward_setup_time
+                elif method=="lpgd" or method=="cvxpylayer":
+                    forward_solve_time_ = model.optlayer.info['solve_time']
+                    backward_solve_time_ = model.optlayer.info['dDT_time']
+                    forward_setup_time_ = model.optlayer.info['canon_time']
+                    backward_setup_time_ = model.optlayer.info['dcanon_time']
+                else:
+                    forward_solve_time_ = forward_time_
+                    backward_solve_time_ = backward_time_
+                    forward_setup_time_ = 0
+                    backward_setup_time_ = 0
+                    
+                    
+                forward_solve_time += forward_solve_time_
+                backward_solve_time += backward_solve_time_
+                forward_setup_time += forward_setup_time_
+                backward_setup_time += backward_setup_time_
+                
+                
+                with open(step_experiment_dir + filename, 'a') as step_file:
+                    step_file.write(f'{epoch},{i},{df_loss.item()},{forward_time_},{backward_time_},{forward_solve_time_},{backward_solve_time_},{forward_setup_time_},{backward_setup_time_}\n')
+                    step_file.flush()
 
 
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
@@ -196,9 +232,9 @@ if __name__ == '__main__':
                 
                 print(f"train loss: {loss.item()}, iter time: {iter_time}")
                 
-                if method=="ffocp_eq":
-                    print(f"forward_opt_time: {forward_optimization_time_}, backward_opt_time: {backward_optimization_time_}")
-                    print(f"forward_num_iters: {forward_num_iters}, backward_num_iters: {backward_num_iters}")
+                # if method=="ffocp_eq":
+                #     print(f"forward_opt_time: {forward_optimization_time_}, backward_opt_time: {backward_optimization_time_}")
+                #     print(f"forward_num_iters: {forward_num_iters}, backward_num_iters: {backward_num_iters}")
 
             print('Forward time {}, backward time {}'.format(forward_time, backward_time))
 

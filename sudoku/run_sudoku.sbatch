@@ -26,7 +26,6 @@ echo "METHOD=$METHOD, SEED=$SEED, N=$N, EPOCHS=$EPOCHS, LR=$LR, BATCH_SIZE=$BATC
 
 export GRB_LICENSE_FILE=/nethome/sho73/gurobi.lic
 
-#python sudoku/main_sudoku.py --method $METHOD --epochs $EPOCHS --seed $SEED --lr $LR --batch_size $BATCH_SIZE --n $N
 
 python sudoku/main_sudoku.py \
   --method $METHOD \

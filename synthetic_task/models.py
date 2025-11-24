@@ -15,8 +15,8 @@ from ffocp_eq_timing import BLOLayer
 from ffocp_eq_multithread import BLOLayer as BLOLayerMT
 
 from qpthlocal.qp import QPFunction
-from cvxpylayers.torch import CvxpyLayer
-# from cvxpylayers_local.cvxpylayer import CvxpyLayer
+# from cvxpylayers.torch import CvxpyLayer
+from cvxpylayers_local.cvxpylayer import CvxpyLayer
 from cvxpylayers_local.cvxpylayer import CvxpyLayer as LPGDLayer
 
 import ffoqp_eq_cst
@@ -111,13 +111,21 @@ class OptModel(nn.Module):
         
         ### default optimization parameters
         self.Q = torch.eye(opt_dim).to(device)#.double()
-        G = torch.cat([torch.eye(opt_dim), -torch.eye(opt_dim), torch.ones(1,opt_dim)], dim=0)#.double()
-        h = torch.cat([torch.zeros(opt_dim), torch.ones(opt_dim), torch.Tensor([3])], dim=0)#.double()
+        G = torch.cat([torch.eye(opt_dim), -torch.eye(opt_dim), torch.ones(1,opt_dim)], dim=0).to(device)#.double()
+        h = torch.cat([torch.zeros(opt_dim), torch.ones(opt_dim), torch.Tensor([3])], dim=0).to(device)#.double()
         
         ### simple 
         # G = torch.ones(1,opt_dim).to(device)
         # G[:,1:] = 0.0
         # h = torch.Tensor([0]).to(device)
+        
+        ### dense
+        # self.Q = torch.ones(opt_dim, opt_dim).to(device) + torch.eye(opt_dim).to(device)
+        # x_star = torch.zeros(opt_dim).to(device)
+        # G = torch.ones(self.num_ineq, opt_dim).to(device)   
+        # eps = 1.0                    
+        # h = G @ x_star + eps        
+        
         
         self.A = torch.Tensor().to(device)
         self.b = torch.Tensor().to(device)
@@ -135,7 +143,7 @@ class OptModel(nn.Module):
         if self.layer_type not in [QPTH, LPGD_QP]:
             problem, objective_fn, constraints, params, variables = setup_cvxpy_synthetic_problem(opt_dim, self.num_ineq)
     
-            multithread = False
+            multithread = True
             if layer_type==FFOCP_EQ:
                 if not multithread:
                     self.optlayer = BLOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, solver_name="SCS")

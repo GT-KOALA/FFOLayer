@@ -230,6 +230,11 @@ class _BLOLayer(torch.nn.Module):
             
             self.phi_torch_list.append(phi_torch)
             
+        self.forward_setup_time = None
+        self.backward_setup_time = None
+        self.forward_solve_time = None
+        self.backward_solve_time = None
+            
 
     def forward(self, *params, solver_args={}):
         """Solve problem (or a batch of problems) corresponding to `params`
@@ -363,11 +368,17 @@ def _BLOLayerFn(
                         continue
                     param_obj.value = p_val
 
+                
                 try:
+                    # blolayer.problem_list[i].solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0})
                     blolayer.problem_list[i].solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
                 except:
                     print("forward pass SCS failed, using OSQP")
                     blolayer.problem_list[i].solve(solver=cp.OSQP, warm_start=False, verbose=False)
+                
+                
+                setup_time = blolayer.problem_list[i].compilation_time
+                solve_time = blolayer.problem_list[i].solver_stats.solve_time
                 
                 # collect primal and dual outputs for this slot
                 sol_vals = [v.value for v in blolayer.variables_list[i]]
@@ -375,7 +386,7 @@ def _BLOLayerFn(
                 ineq_vals = [c.dual_value for c in blolayer.ineq_constraints_list[i]]
                 slack_vals = [np.maximum(-expr.value, 0.0) for expr in blolayer.ineq_functions_list[i]]
 
-                return sol_vals, eq_vals, ineq_vals, slack_vals
+                return sol_vals, eq_vals, ineq_vals, slack_vals, setup_time, solve_time
 
             # run parallel solves while limiting BLAS/OpenMP threads to 1 (avoid oversubscription)
             with threadpool_limits(limits=1):
@@ -385,8 +396,11 @@ def _BLOLayerFn(
                 finally:
                     pool.close()
                     # pool.join()
+                    
+            avg_setup_time = 0.0
+            avg_solve_time = 0.0
 
-            for i, (sol_i, eq_i, ineq_i, slack_i) in enumerate(results):
+            for i, (sol_i, eq_i, ineq_i, slack_i, setup_time_i, solve_time_i) in enumerate(results):
                 # convert to torch tensors and incorporate info_forward
                 for v_id, v in enumerate(blolayer.variables_list[i]):
                     sol_numpy[v_id][i, ...] = sol_i[v_id]
@@ -402,6 +416,12 @@ def _BLOLayerFn(
                     s_val = -g_val
                     s_val = np.maximum(s_val, 0.0)
                     ineq_slack_residual[c_id][i, ...] = slack_i[c_id]
+                    
+                avg_setup_time += setup_time_i
+                avg_solve_time += solve_time_i
+            
+            blolayer.forward_setup_time = avg_setup_time / B
+            blolayer.forward_solve_time = avg_solve_time / B
 
             ctx.sol_numpy = sol_numpy
             ctx.eq_dual = eq_dual
@@ -515,7 +535,11 @@ def _BLOLayerFn(
                 for j, _ in enumerate(blolayer.eq_functions_list[i]):
                     blolayer.eq_dual_params_list[i][j].value = eq_dual[j][i]
 
+                # blolayer.perturbed_problem_list[i].solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0})
                 blolayer.perturbed_problem_list[i].solve(solver=cp.SCS, warm_start=True, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
+
+                setup_time = blolayer.perturbed_problem_list[i].compilation_time
+                solve_time = blolayer.perturbed_problem_list[i].solver_stats.solve_time
 
                 st = blolayer.perturbed_problem_list[i].status
                 sol_diffs = []
@@ -533,7 +557,7 @@ def _BLOLayerFn(
                         new_sol_lagrangian[j][i, ...] = v.value
                         sol_diff = np.linalg.norm(sol_numpy[j][i] - v.value)
                         sol_diffs.append(sol_diff)
-                return sol_diffs
+                return sol_diffs, setup_time, solve_time
             
             # run parallel solves while limiting BLAS/OpenMP threads to 1 (avoid oversubscription)
             with threadpool_limits(limits=1):
@@ -543,6 +567,17 @@ def _BLOLayerFn(
                 finally:
                     pool.close()
                     # pool.join()
+                    
+            avg_setup_time = 0.0
+            avg_solve_time = 0.0
+
+            for i, (_, setup_time_i, solve_time_i) in enumerate(sol_diffs_list):
+                # convert to torch tensors and incorporate info_forward
+                avg_setup_time += setup_time_i
+                avg_solve_time += solve_time_i
+            
+            blolayer.backward_setup_time = avg_setup_time / B
+            blolayer.backward_solve_time = avg_solve_time / B
 
 
             for i in range(B):

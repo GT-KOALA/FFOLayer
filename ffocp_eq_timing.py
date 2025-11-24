@@ -487,6 +487,7 @@ def _BLOLayerFn(
                     if c.dual_value is None and ctx._warm_ineq_duals[j] is not None:
                         c.dual_value = ctx._warm_ineq_duals[j]
 
+                num_active = 0
                 for j, _ in enumerate(blolayer.ineq_functions):
                     # key for bilevel algorithm: identify the active constraints and add them to the equality constraints
                     lam = ineq_dual[j][i]
@@ -495,6 +496,7 @@ def _BLOLayerFn(
                     # active_mask_params[j].value = ((lam > dual_cutoff)).astype(np.float64)
                     _requires_active = (slack[j][i] <= blolayer.slack_tol).astype(np.float64)
                     blolayer.active_mask_params[j].value = _requires_active
+                    
 
                     # print(f"num active constraints: {active_mask_params[j].value.sum()}")
                     if _requires_active.sum() > y_dim - num_eq:
@@ -505,6 +507,11 @@ def _BLOLayerFn(
                         mask = np.zeros_like(lam, dtype=np.float64)
                         mask[idx] = 1.0
                         blolayer.active_mask_params[j].value = mask
+                        num_active+=np.sum(mask)
+                    else:
+                        num_active+=np.sum(_requires_active)
+                    
+                    print(f">> num active constraints: {num_active}")
 
                 for j, _ in enumerate(blolayer.eq_functions):
                     blolayer.eq_dual_params[j].value = eq_dual[j][i]
