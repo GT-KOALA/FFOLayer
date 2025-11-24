@@ -20,7 +20,13 @@ def _np(x):
 
 def to_numpy(x):
     # convert torch tensor to numpy array
-    return x.cpu().detach().double().numpy()
+    if isinstance(x, torch.Tensor):
+        if x.device.type == 'cuda':
+            return x.cpu().detach().double().numpy()
+        else:
+            return x.detach().double().numpy()
+    else:
+        return np.array(x)
 
 
 def to_torch(x, dtype, device):
