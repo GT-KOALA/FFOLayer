@@ -103,7 +103,7 @@ class OptModel(nn.Module):
         self.constraint_learnable = constraint_learnable
         self.y_dim = opt_dim
         self.input_dim = input_dim
-        self.num_ineq = 2 * opt_dim + 1
+        self.num_ineq = 2*opt_dim + 1
         self.num_eq = 0
         
         
@@ -113,6 +113,11 @@ class OptModel(nn.Module):
         self.Q = torch.eye(opt_dim).to(device)#.double()
         G = torch.cat([torch.eye(opt_dim), -torch.eye(opt_dim), torch.ones(1,opt_dim)], dim=0).to(device)#.double()
         h = torch.cat([torch.zeros(opt_dim), torch.ones(opt_dim), torch.Tensor([3])], dim=0).to(device)#.double()
+        
+        # self.Q = torch.eye(opt_dim).to(device)#.double()
+        # G = torch.cat([torch.eye(opt_dim)], dim=0).to(device)#.double()
+        # h = torch.cat([torch.zeros(opt_dim)], dim=0).to(device)#.double()
+        
         
         ### simple 
         # G = torch.ones(1,opt_dim).to(device)

@@ -157,7 +157,7 @@ if __name__ == '__main__':
                 iter_time = time.time() - iter_start_time
                 
                 
-                do_record = not(epoch==0 and i==0)
+                do_record = True #not(epoch==0 and i==0)
                 if do_record:
                     forward_time += forward_time_
                     backward_time += backward_time_

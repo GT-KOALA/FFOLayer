@@ -13,10 +13,10 @@ BASE_DIR = f"../synthetic_results_{batch_size}"
 # BASE_DIR = f"../synthetic_results_1_compare_SCS_OSQP_dim200_debug"
 METHODS = [
     "ffocp_eq",
-    "lpgd",
+    # "lpgd",
     "cvxpylayer",
-    "ffoqp_eq_schur",
-    "qpth"
+    # "ffoqp_eq_schur",
+    # "qpth"
 ]
 METHODS_STEPS = [method+"_steps" for method in METHODS]
 LINEWIDTH = 1.5
@@ -277,16 +277,18 @@ if __name__=="__main__":
     
     df = load_results()
     df = df.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
+    print("loaded df")
 
     # plot_time_vs_method(df, time_names=['forward_time', 'backward_time'], plot_path=BASE_DIR)
     # plot_time_vs_epoch(df, time_names=['forward_time', 'backward_time'], iteration_name='epoch', plot_path=BASE_DIR)
     plot_total_time_vs_method(df, time_names=['forward_time', 'backward_time'], plot_path=BASE_DIR)
-    plot_losse_vs_epoch(df, "train_df_loss", iteration_name='epoch', plot_path=BASE_DIR)
+    # plot_losse_vs_epoch(df, "train_df_loss", iteration_name='epoch', plot_path=BASE_DIR)
     
     
     
     df = load_results(methods=METHODS_STEPS)
     df = df.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
+    print("loaded df steps")
 
     # plot_time_vs_method(df, time_names=['forward_solve_time', 'backward_solve_time'], plot_path=BASE_DIR, plot_name_tag="steps_solve")
     # plot_time_vs_method(df, time_names=['forward_setup_time', 'backward_setup_time'], plot_path=BASE_DIR, plot_name_tag="steps_setup")
