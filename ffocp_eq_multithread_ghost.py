@@ -250,6 +250,7 @@ class _BLOLayer(torch.nn.Module):
         
         self.phi_torch_list = []
         self.ineq_dual_term_torch_list = []
+        self.eq_dual_term_torch_list = []
         for i in range(num_batch):
             objective = self.objective_list[i]
             eq_functions = self.eq_functions_list[i]
@@ -262,6 +263,11 @@ class _BLOLayer(torch.nn.Module):
                 provided_vars_list=[*variables, *self.param_order_list[i], *self.ineq_dual_params_list[i]]
             ).torch_expression)
 
+            eq_dual_product = cp.sum([cp.sum(cp.multiply(du, f)) for du, f in zip(self.eq_dual_params_list[i], eq_functions)])
+            self.eq_dual_term_torch_list.append(TorchExpression(
+                eq_dual_product,
+                provided_vars_list=[*variables, *self.param_order_list[i], *self.eq_dual_params_list[i]]
+            ).torch_expression)
 
             phi_expr = objective \
                 + cp.sum([cp.sum(cp.multiply(du, f)) for du, f in zip(self.eq_dual_params_list[i], eq_functions)]) \
@@ -666,9 +672,13 @@ def _BLOLayerFn(
 
                     ineq_dual_term_new_i = blolayer.ineq_dual_term_torch_list[i](*vars_old_i, *params_i, *new_ineq_dual_i)
                     ineq_dual_term_old_i = blolayer.ineq_dual_term_torch_list[i](*vars_old_i, *params_i, *old_ineq_dual_i)
+                    
+                    eq_dual_term_new_i = blolayer.eq_dual_term_torch_list[i](*vars_old_i, *params_i, *new_eq_dual_i)
+                    eq_dual_term_old_i = blolayer.eq_dual_term_torch_list[i](*vars_old_i, *params_i, *old_eq_dual_i)
+
                     phi_new_i = blolayer.phi_torch_list[i](*vars_new_i, *params_i, *old_eq_dual_i, *old_ineq_dual_i)
                     phi_old_i = blolayer.phi_torch_list[i](*vars_old_i, *params_i, *old_eq_dual_i, *old_ineq_dual_i)
-                    loss +=  phi_new_i + ineq_dual_term_new_i - phi_old_i - ineq_dual_term_old_i
+                    loss +=  phi_new_i + ineq_dual_term_new_i + eq_dual_term_new_i - phi_old_i - ineq_dual_term_old_i - eq_dual_term_old_i
 
                 loss = blolayer.alpha * loss
 
