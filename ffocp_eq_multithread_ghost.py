@@ -204,7 +204,6 @@ class _BLOLayer(torch.nn.Module):
         ineq_dual_product_list = [cp.sum([cp.sum(cp.multiply(lm, g))
                                     for lm, g in zip(self.ineq_dual_params_list[i], ineq_functions_list[i])]) for i in range(num_batch)]
 
-        self.ghost_objective_list = [objective_list[i] + ineq_dual_product_list[i] for i in range(num_batch)]
         self.new_objective_list = [(1/self.alpha) * vars_dvars_product_list[i] + objective_list[i] + ineq_dual_product_list[i] for i in range(num_batch)]
         self.active_eq_constraints_list = [[
             cp.multiply(self.active_mask_params_list[i][j], ineq_functions[j]) == 0
