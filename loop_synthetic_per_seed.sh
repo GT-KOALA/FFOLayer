@@ -1,7 +1,7 @@
 #!/bin/bash
 
 
-seeds=($(seq 1 2))   # ← ARRAY, not string
+seeds=($(seq 1 3))   # ← ARRAY, not string
 
 for seed in "${seeds[@]}"; do
     jobname="syn_seed${seed}"

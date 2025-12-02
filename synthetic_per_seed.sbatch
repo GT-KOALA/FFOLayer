@@ -18,6 +18,7 @@ seed=$1
 echo "Running seed=$seed"
 
 methods=("ffocp_eq" "cvxpylayer" "lpgd" "ffoqp_eq_schur" "qpth")
+# methods=("ffocp_eq")
 epochs=1
 batchSize=8
 ydim=900

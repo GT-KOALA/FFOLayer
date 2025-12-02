@@ -46,6 +46,7 @@ def BLOLayer(
     slack_tol: float = 1e-8,
     compute_cos_sim: bool = False,
     eps: float = 1e-7,
+    backward_eps: float = 1e-7
 ):
     """
     Create an optimization layer that can be called like a CvxpyLayer:
@@ -118,6 +119,7 @@ def BLOLayer(
         slack_tol=slack_tol,
         _compute_cos_sim=compute_cos_sim,
         eps=eps,
+        backward_eps=backward_eps
     )
 
 class _BLOLayer(torch.nn.Module):
@@ -157,7 +159,7 @@ class _BLOLayer(torch.nn.Module):
         ```
     """
 
-    def __init__(self, objective_list, eq_functions_list, ineq_functions_list, parameters_list, variables_list, alpha, dual_cutoff, slack_tol, eps, _compute_cos_sim=False):
+    def __init__(self, objective_list, eq_functions_list, ineq_functions_list, parameters_list, variables_list, alpha, dual_cutoff, slack_tol, eps, backward_eps, _compute_cos_sim=False):
         """Construct a BLOLayer
 
         Args:
@@ -188,6 +190,7 @@ class _BLOLayer(torch.nn.Module):
         self.slack_tol = float(slack_tol) 
         self._compute_cos_sim = _compute_cos_sim
         self.eps = eps
+        self.backward_eps = backward_eps
         
         self.eq_constraints_list = [[f == 0 for f in eq_functions] for eq_functions in eq_functions_list]
         self.ineq_constraints_list = [[g <= 0 for g in ineq_functions] for ineq_functions in ineq_functions_list]
@@ -587,7 +590,7 @@ def _BLOLayerFn(
                     blolayer.eq_dual_params_list[i][j].value = eq_dual[j][i]
 
                 # blolayer.perturbed_problem_list[i].solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0})
-                blolayer.perturbed_problem_list[i].solve(solver=cp.SCS, warm_start=True, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
+                blolayer.perturbed_problem_list[i].solve(solver=cp.SCS, warm_start=True, ignore_dpp=True, max_iters=2500, eps=blolayer.backward_eps)
 
                 setup_time = blolayer.perturbed_problem_list[i].compilation_time
                 solve_time = blolayer.perturbed_problem_list[i].solver_stats.solve_time

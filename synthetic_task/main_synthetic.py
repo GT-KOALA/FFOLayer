@@ -20,7 +20,7 @@ if __name__ == '__main__':
     parser.add_argument('--method', type=str, help='bilevel layer method')
     parser.add_argument('--epochs', type=int, default=20, help='number of epochs')
     parser.add_argument('--seed', type=int, default=3, help='random seed')
-    parser.add_argument('--lr', type=float, default=0.00001, help='learning rate')
+    parser.add_argument('--lr', type=float, default=0.001, help='learning rate') #0.00001
     parser.add_argument('--batch_size', type=int, default=32, help='batch size')
     parser.add_argument('--ydim', type=int, default=1000, help='dimension of y')
     
@@ -39,6 +39,7 @@ if __name__ == '__main__':
     seed = args.seed
     num_epochs = args.epochs
     learning_rate = args.lr
+    print("learning rate: ", learning_rate)
     alpha = args.alpha
     dual_cutoff = args.dual_cutoff
     slack_tol = args.slack_tol

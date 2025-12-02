@@ -36,9 +36,6 @@ markers_dict = {method: markers[i] for i, method in enumerate(method_order)}
 LINEWIDTH = 1.5
 
 
-# EPOCH_0_PATH = f"../synthetic_results_epoch_zero"
-# EPOCH_0_DF = pd.read_csv(os.path.join(EPOCH_0_PATH, "epoch_0.csv"))
-
 def load_results(base_dir=BASE_DIR, methods=METHODS):
     dfs = []
     for m in methods:
@@ -73,7 +70,6 @@ def load_results(base_dir=BASE_DIR, methods=METHODS):
         raise FileNotFoundError(f"No CSVs found under {base_dir}.")
     return pd.concat(dfs, ignore_index=True, sort=False)
 
-    
 def plot_time_vs_method(df, time_names=['forward_time', 'backward_time'], plot_path=BASE_DIR, plot_name_tag=""):
     df_avg_method = df.groupby('method')[time_names].mean().reset_index()
 
@@ -132,10 +128,10 @@ def plot_total_time_vs_method(df, time_names=['forward_time', 'backward_time'], 
     
 def plot_losse_vs_epoch(df, loss_metric_name, iteration_name='epoch', plot_path=BASE_DIR, plot_name_tag="", loss_range=None, stride=50):
     df_avg_epoch = df.groupby(['method', iteration_name])[[loss_metric_name]].mean().reset_index()
-    print(df_avg_epoch)
+    # print(df_avg_epoch)
     
-    epoch_0_loss = -0.00950829166918993
-    df_avg_epoch.loc[df_avg_epoch[iteration_name] == 0, loss_metric_name] = epoch_0_loss
+    # epoch_0_loss = -0.00950829166918993
+    # df_avg_epoch.loc[df_avg_epoch[iteration_name] == 0, loss_metric_name] = epoch_0_loss
 
     
     # df_avg_epoch = df_avg_epoch[df_avg_epoch[iteration_name] % stride == 0]

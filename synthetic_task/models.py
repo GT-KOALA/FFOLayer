@@ -90,7 +90,7 @@ def get_feasible_h(G, z0, s0):
 
 
 class OptModel(nn.Module):
-    def __init__(self, input_dim, opt_dim, layer_type, constraint_learnable, device, batch_size, alpha=100, dual_cutoff=1e-3, slack_tol=1e-6):
+    def __init__(self, input_dim, opt_dim, layer_type, constraint_learnable, device, batch_size, alpha=100, dual_cutoff=1e-3, slack_tol=1e-6, backward_eps=1e-5):
         '''
         The architecture is {parameter - optLayer}.
             
@@ -163,7 +163,7 @@ class OptModel(nn.Module):
                         params_list.append(params)
                         variables_list.append(variables)
                     
-                    self.optlayer = BLOLayerMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12)
+                    self.optlayer = BLOLayerMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, backward_eps=1e-5)
                     
             elif layer_type==CVXPY_LAYER:
                 self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
@@ -208,7 +208,7 @@ class OptModel(nn.Module):
             params_batched = [Q_batched, q_pred, G_batched, h_batched]
             
             if self.layer_type==LPGD:
-                sol, = self.optlayer(*params_batched, solver_args={"eps": 1e-12}) #, solver_args={"eps": 1e-8, "max_iters": 10000, "acceleration_lookback": 0}
+                sol, = self.optlayer(*params_batched, solver_args={"eps": 1e-3}) #, solver_args={"eps": 1e-8, "max_iters": 10000, "acceleration_lookback": 0}
             else:
                 sol, = self.optlayer(*params_batched)
                 
