@@ -21,6 +21,9 @@ from qpthlocal.qp import QPFunction
 from cvxpylayers_local.cvxpylayer import CvxpyLayer
 from cvxpylayers_local.cvxpylayer import CvxpyLayer as LPGDLayer
 
+from BPQP import BPQPLayer
+from AltDiff import AltDiffLayer
+
 import ffoqp_eq_cst
 import ffoqp_eq_cst_schur
 import ffoqp_eq_cst_parallelize
@@ -131,7 +134,7 @@ class OptModel(nn.Module):
         '''
         super().__init__()
         self.layer_type = layer_type
-        assert(layer_type in [FFOCP_EQ, CVXPY_LAYER, LPGD, QPTH, LPGD_QP, FFOQP_EQ, FFOQP_EQ_SCHUR, FFOQP_EQ_PARALLELIZE, FFOQP_EQ_PDIPM])
+        assert(layer_type in [FFOCP_EQ, CVXPY_LAYER, LPGD, QPTH, LPGD_QP, FFOQP_EQ, FFOQP_EQ_SCHUR, FFOQP_EQ_PARALLELIZE, FFOQP_EQ_PDIPM, BPQP, ALTDIFF])
         
         self.constraint_learnable = constraint_learnable
         self.y_dim = opt_dim
@@ -179,7 +182,7 @@ class OptModel(nn.Module):
                 self.G = G.to(device)
                 self.h = h.to(device)
                 
-            if self.layer_type not in [QPTH, LPGD_QP]:
+            if self.layer_type not in [QPTH, LPGD_QP, BPQP, ALTDIFF]:
                 problem, objective_fn, constraints, params, variables = setup_cvxpy_synthetic_problem(opt_dim, self.num_ineq)
         
                 multithread = True
@@ -214,6 +217,10 @@ class OptModel(nn.Module):
             else:
                 if self.layer_type==QPTH:
                     self.optlayer = QPFunction(verbose=-1)
+                elif self.layer_type==BPQP:
+                    self.optlayer = BPQPLayer()
+                elif self.layer_type==ALTDIFF:
+                    self.optlayer = AltDiffLayer()
         else:
             self.Q = torch.eye(opt_dim).to(device)#.double()
             G = torch.cat([torch.eye(opt_dim), -torch.eye(opt_dim), torch.ones(1,opt_dim)], dim=0).to(device)#.double()
@@ -273,6 +280,11 @@ class OptModel(nn.Module):
                 sol = self.optlayer(
                     self.Q, q_pred, self.G, h, self.A, self.b
                 )
+            elif self.layer_type==BPQP:
+                Q_batched = self.Q.unsqueeze(0).expand(nBatch, -1, -1)   # (batch, y_dim, y_dim)
+                G_batched = self.G.unsqueeze(0).expand(nBatch, -1, -1)   # (batch, num_ineq, y_dim)
+                h_batched = h.unsqueeze(0).expand(nBatch, -1)       # (batch, num_ineq)
+                sol = self.optlayer(Q_batched, q_pred, G_batched, h_batched, self.A, self.b)
             else:
                 # Expand constant params along batch dimension
                 Q_batched = self.Q.unsqueeze(0).expand(nBatch, -1, -1)   # (batch, y_dim, y_dim)

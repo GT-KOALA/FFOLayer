@@ -9,4 +9,5 @@ FFOQP_EQ_SCHUR = "ffoqp_eq_schur"
 FFOQP_EQ_PARALLELIZE = "ffoqp_eq_parallelize"
 FFOQP_EQ_PDIPM = "ffoqp_eq_pdipm"
 
-
+BPQP = "bpqp"
+ALTDIFF = "altdiff"

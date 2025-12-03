@@ -74,7 +74,7 @@ def alt_diff_qp(P, q, A, b, G, h):
     y_f = dxk
     return xk, y_f
 
-def alt_diff(eps=1e-3, verbose=0):
+def AltDiffLayer(eps=1e-3, verbose=0):
     class Newlayer(Function):
         @staticmethod
         def forward(ctx, P_, q_):
@@ -115,7 +115,7 @@ if __name__ == "__main__":
     P_ = torch.tensor(P).float().to(device)
     q_ = torch.tensor(q).float().to(device)
     q_.requires_grad = True
-    net = alt_diff()
+    net = AltDiff()
     pred = net(P_,q_)
     loss = pred@torch.ones(20).to(device)
     loss.backward()

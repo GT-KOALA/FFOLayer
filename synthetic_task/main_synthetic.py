@@ -29,7 +29,7 @@ if __name__ == '__main__':
     parser.add_argument('--slack_tol', type=float, default=1e-8, help='slack tolerance')
 
     parser.add_argument('--device', type=str, default='cuda:0', help='device')
-    parser.add_argument('--learn_constraint', type=int, default=1, help='whether to learn constraint')
+    parser.add_argument('--learn_constraint', type=int, default=0, help='whether to learn constraint')
     parser.add_argument('--suffix', type=str, default="", help='suffix to the result directory')
     
     
