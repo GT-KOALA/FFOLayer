@@ -15,6 +15,7 @@ METHODS = [
     "cvxpylayer",
     "qpth",
     "lpgd",
+    "bpqp",
     "ffoqp_eq_schur",
     "ffocp_eq",
 ]
@@ -22,6 +23,7 @@ METHODS_LEGEND = {
     "cvxpylayer": "CvxpyLayer",
     "qpth": "qpth",
     "lpgd": "LPGD",
+    "bpqp": "BPQP",
     "ffoqp_eq_schur": "FFOQP",
     "ffocp_eq": "FFOCP",
 }
@@ -30,7 +32,7 @@ METHODS_STEPS = [method+"_steps" for method in METHODS]
 
 method_order = [METHODS_LEGEND[m] for m in METHODS]
 
-markers = ["o", "s", "D", "^", "v"]
+markers = ["o", "s", "D", "^", "v", "x"]
 markers_dict = {method: markers[i] for i, method in enumerate(method_order)}
 
 LINEWIDTH = 1.5
