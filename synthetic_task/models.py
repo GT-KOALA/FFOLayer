@@ -231,7 +231,7 @@ class OptModel(nn.Module):
                         "eq_functions":eq_funcs, "ineq_functions":ineq_funcs}
                     
                     
-                    self.optlayer = ffoqp_eq_cst_schur.ffoqp(alpha=alpha, chunk_size=1)
+                    self.optlayer = ffoqp_eq_cst_schur.ffoqp(alpha=alpha, chunk_size=1, cvxpy_instance=cvxpy_instance)
                 elif layer_type == FFOQP_EQ_PARALLELIZE:
                     self.optlayer = ffoqp_eq_cst_parallelize.ffoqp(alpha=alpha, chunk_size=1)
             else:
