@@ -9,6 +9,8 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import cvxpy as cp
+from BPQP import BPQPLayer
+
 from ffocp_eq import BLOLayer
 # from ffocp_eq_multithread_wo_list import BLOLayer as BLOLayerMT
 from ffocp_eq_multithread_ghost import BLOLayer as BLOLayerMT
@@ -113,7 +115,7 @@ class SingleOptLayerSudoku(nn.Module):
         '''
         super().__init__()
         self.layer_type = layer_type
-        assert(layer_type in [QPTH, FFOCP_EQ, LPGD, CVXPY_LAYER, FFOQP_EQ, LPGD_QP])
+        assert(layer_type in [QPTH, FFOCP_EQ, LPGD, CVXPY_LAYER, FFOQP_EQ, LPGD_QP, BPQP])
        
         param_vals = get_default_sudoku_params(n, Qpenalty=Qpenalty, get_equality=True)
         
@@ -132,7 +134,7 @@ class SingleOptLayerSudoku(nn.Module):
         assert(len(learnable_parts)!=0)
         assert(len(learnable_parts)==1)
         
-        if self.layer_type in [QPTH, FFOQP_EQ, LPGD_QP]:
+        if self.layer_type in [QPTH, FFOQP_EQ, LPGD_QP, BPQP]:
             self.register_buffer("Q", param_vals["Q"])
         else:
             self.register_buffer("Q", param_vals["Q"]**0.5) ## due to the setup cvxpy problem method
@@ -171,7 +173,7 @@ class SingleOptLayerSudoku(nn.Module):
         
         
         ######## set up optimization layer
-        if self.layer_type not in [QPTH, LPGD_QP]:
+        if self.layer_type not in [QPTH, LPGD_QP, BPQP]:
             problem, objective, ineq_functions, eq_functions, params, variables = setup_cvx_qp_problem(opt_var_dim=self.y_dim, num_ineq=self.num_ineq, num_eq=self.num_eq)
             
             multithread = True
@@ -207,6 +209,8 @@ class SingleOptLayerSudoku(nn.Module):
                 self.optlayer = QPFunction(verbose=-1)
             elif self.layer_type==LPGD_QP:
                 self.optlayer = lpgd_ffoqp(alpha=alpha)
+            elif self.layer_type==BPQP:
+                self.optlayer = BPQPLayer()
         
     def forward(self, x):
         puzzle_shape = x.shape
@@ -236,6 +240,15 @@ class SingleOptLayerSudoku(nn.Module):
         if self.layer_type in [QPTH, FFOQP_EQ, LPGD_QP]:
             sol = self.optlayer(
                 self.Q, p, self.G, h, self.A, b
+            )
+        elif self.layer_type==BPQP:
+            Q_batched = self.Q.unsqueeze(0).expand(nBatch, -1, -1)   # (batch, y_dim, y_dim)
+            G_batched = self.G.unsqueeze(0).expand(nBatch, -1, -1)   # (batch, num_ineq, y_dim)
+            h_batched = h.unsqueeze(0).expand(nBatch, -1)       # (batch, num_ineq)
+            A_batched = self.A.unsqueeze(0).expand(nBatch, -1, -1)   # (batch, num_eq, y_dim)
+            b_batched = b.unsqueeze(0).expand(nBatch, -1)       # (batch, num_eq)
+            sol = self.optlayer(
+                Q_batched, p, G_batched, h_batched, A_batched, b_batched
             )
         else:
             # Expand constant params along batch dimension
