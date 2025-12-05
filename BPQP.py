@@ -92,8 +92,8 @@ def BPQPLayer(sign=1, act_tol=1e-6):
             for i in range(B):
                 Pi = P[i] if batched else P
                 qi = q[i] if q.dim() == 2 else q
-                Gi = G[i] if G.dim() == 3 else G
                 hi = h[i] if h.dim() == 2 else h
+                Gi = G[i] if G.dim() == 3 else G
                 Ai = A[i] if A.dim() == 3 else A
                 bi = b[i] if b.dim() == 2 else b
                 xi = x[i] if batched else x
