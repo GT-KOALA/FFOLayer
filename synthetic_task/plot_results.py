@@ -58,8 +58,6 @@ def load_results(base_dir=BASE_DIR, methods=METHODS):
             # Join with epoch 0 results to get the epoch 0 train df loss
             # epoch_0_loss = EPOCH_0_DF[(EPOCH_0_DF["method"]==m) & (EPOCH_0_DF["seed"]==seed)]["train_df_loss"].values
             # epoch_0_row = [0,0,epoch_0_loss,0,0,0,0,0,0]
-            
-            
 
             df["seed"] = grab(r"_seed(\d+)", int)
             df["ydim"] = grab(r"ydim(\d+)", int)
@@ -125,10 +123,10 @@ def plot_total_time_vs_method(df, time_names=['forward_time', 'backward_time'], 
     plt.title("Total Time vs Method")
     plt.legend()
     plt.savefig(f"{plot_path}/{plot_name_tag}_total_time_vs_method.pdf", dpi=300, bbox_inches='tight')
-    plt.savefig(f"{plot_path}/{plot_name_tag}_total_time_vs_method.png", dpi=300, bbox_inches='tight')
+    # plt.savefig(f"{plot_path}/{plot_name_tag}_total_time_vs_method.png", dpi=300, bbox_inches='tight')
     plt.close()
     
-def plot_losse_vs_epoch(df, loss_metric_name, iteration_name='epoch', plot_path=BASE_DIR, plot_name_tag="", loss_range=None, stride=50):
+def plot_loss_vs_epoch(df, loss_metric_name, iteration_name='epoch', plot_path=BASE_DIR, plot_name_tag="", loss_range=None, stride=50):
     df_avg_epoch = df.groupby(['method', iteration_name])[[loss_metric_name]].mean().reset_index()
     # print(df_avg_epoch)
     
@@ -156,9 +154,33 @@ def plot_losse_vs_epoch(df, loss_metric_name, iteration_name='epoch', plot_path=
         ax.set_ylim(loss_range)
     
     plt.savefig(f"{plot_path}/{plot_name_tag}_{loss_metric_name}_vs_{iteration_name}.pdf", dpi=300, bbox_inches='tight')
-    plt.savefig(f"{plot_path}/{plot_name_tag}_{loss_metric_name}_vs_{iteration_name}.png", dpi=300, bbox_inches='tight')
+    # plt.savefig(f"{plot_path}/{plot_name_tag}_{loss_metric_name}_vs_{iteration_name}.png", dpi=300, bbox_inches='tight')
     plt.close()
-        
+
+def plot_total_time_vs_method_by_ydim(df, plot_path, time_names=('forward_time','backward_time'), tag="syn"):
+    os.makedirs(plot_path, exist_ok=True)
+    ydims = sorted(df["ydim"].dropna().unique().astype(int))
+    for y in ydims:
+        d = df[df["ydim"] == y]
+        plot_total_time_vs_method(
+            d,
+            time_names=list(time_names),
+            plot_path=plot_path,
+            plot_name_tag=f"{tag}_ydim{y}"
+        )
+
+def plot_total_loss_vs_method_by_ydim(df, plot_path):
+    os.makedirs(plot_path, exist_ok=True)
+    ydims = sorted(df["ydim"].dropna().unique().astype(int))
+    for y in ydims:
+        d = df[df["ydim"] == y]
+        plot_loss_vs_epoch(
+            d,
+            loss_metric_name="train_df_loss",
+            iteration_name="iter",
+            plot_path=plot_path,
+            plot_name_tag=f"syn_ydim{y}"
+        )
 
 
         
@@ -188,8 +210,6 @@ if __name__=="__main__":
     plot_total_time_vs_method(df, time_names=['forward_time', 'backward_time'], plot_path=BASE_DIR, plot_name_tag="syn")
     # plot_losse_vs_epoch(df, "train_df_loss", iteration_name='epoch', plot_path=BASE_DIR)
     
-    
-    
     df = load_results(methods=METHODS_STEPS)
     df = df.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
     df["method"] = pd.Categorical(df["method"], categories=method_order, ordered=True)
@@ -200,5 +220,5 @@ if __name__=="__main__":
     # plot_time_vs_method(df, time_names=['forward_setup_time', 'backward_setup_time'], plot_path=BASE_DIR, plot_name_tag="steps_setup")
     plot_total_time_vs_method(df, time_names=['forward_solve_time', 'backward_solve_time'], plot_path=BASE_DIR, plot_name_tag="syn_steps_solve")
     plot_total_time_vs_method(df, time_names=['forward_setup_time', 'backward_setup_time'], plot_path=BASE_DIR, plot_name_tag="syn_steps_setup")
-    plot_losse_vs_epoch(df, "train_df_loss", iteration_name='iter', plot_path=BASE_DIR, plot_name_tag="syn_steps")
+    plot_loss_vs_epoch(df, "train_df_loss", iteration_name='iter', plot_path=BASE_DIR, plot_name_tag="syn_steps")
     

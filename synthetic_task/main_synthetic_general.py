@@ -20,7 +20,7 @@ if __name__ == '__main__':
     parser.add_argument('--method', type=str, help='bilevel layer method')
     parser.add_argument('--epochs', type=int, default=20, help='number of epochs')
     parser.add_argument('--seed', type=int, default=3, help='random seed')
-    parser.add_argument('--lr', type=float, default=0.00001, help='learning rate')
+    parser.add_argument('--lr', type=float, default=0.001, help='learning rate')
     parser.add_argument('--batch_size', type=int, default=32, help='batch size')
     parser.add_argument('--ydim', type=int, default=1000, help='dimension of y')
     
@@ -79,7 +79,7 @@ if __name__ == '__main__':
     # if not os.path.exists(directory):
     os.makedirs(directory, exist_ok=True)
         
-    step_experiment_dir = '../synthetic_results_{}{}/{}_steps/'.format(args.batch_size, args.suffix, method)
+    step_experiment_dir = '../synthetic_results_general_{}{}/{}_steps/'.format(args.batch_size, args.suffix, method)
     # if os.path.exists(step_experiment_dir + filename):
     #     os.remove(step_experiment_dir + filename)
     # if not os.path.exists(step_experiment_dir):

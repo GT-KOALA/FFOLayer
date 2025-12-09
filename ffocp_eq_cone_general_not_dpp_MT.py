@@ -39,6 +39,7 @@ def _compare_grads(params_req, grads, ground_truth_grads):
     l2_diff = (est - gt).norm()
     return cos_sim, l2_diff
 
+
 # def BLOLayer(problem, parameters, variables, alpha=100.0, dual_cutoff=1e-3, slack_tol=1e-8, eps=1e-7, compute_cos_sim=False):
 #     if isinstance(problem, (list, tuple)):
 #         problem_list = list(problem)
@@ -197,9 +198,11 @@ class BLOLayer(torch.nn.Module):
         self.phi_torch = TorchExpression(phi_expr, provided_vars_list=provided).torch_expression
 
         self.forward_setup_time = 0
+        self.average_forward_solve_time = 0
         self.forward_solve_time = 0
         self.backward_setup_time = 0
         self.backward_solve_time = 0
+        self.average_backward_solve_time = 0
 
     def forward(self, *params, solver_args={}):
         if solver_args is None:
@@ -272,6 +275,10 @@ def _BLOLayerFn(blolayer, solver_args, _compute_cos_sim, info):
                     blolayer.problem_list[slot].solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
                 except Exception:
                     blolayer.problem_list[slot].solve(solver=cp.OSQP, warm_start=False, verbose=False)
+
+                setup_time = blolayer.problem_list[slot].compilation_time
+                solve_time = blolayer.problem_list[slot].solver_stats.solve_time
+
                 st = blolayer.problem_list[slot].status
                 if st not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
                     raise RuntimeError(f"Forward status = {st}")
@@ -288,9 +295,10 @@ def _BLOLayerFn(blolayer, solver_args, _compute_cos_sim, info):
                     else:
                         soc1_vals.append(dv1)
                 lam_vals = [c.dual_value for c in blolayer.soc_lin_constraints_list[slot]]
-                return sol_vals, eq_vals, ineq_vals, slack_vals, soc0_vals, soc1_vals, lam_vals
+                return sol_vals, eq_vals, ineq_vals, slack_vals, soc0_vals, soc1_vals, lam_vals, setup_time, solve_time
 
             use_mt = (ThreadPool is not None) and (B > 1) and (blolayer.num_copies >= B)
+            forward_solve_time_start = time.time()
             if use_mt:
                 with threadpool_limits(limits=1):
                     pool = ThreadPool(processes=min(B, n_threads))
@@ -299,9 +307,13 @@ def _BLOLayerFn(blolayer, solver_args, _compute_cos_sim, info):
                     finally:
                         pool.close()
             else:
-                results = [_solve_one_forward(i) for i in range(B)]
+                raise ValueError("Not implemented")
+                # results = [_solve_one_forward(i) for i in range(B)]
+            blolayer.forward_solve_time = time.time() - forward_solve_time_start
 
-            for i, (sol_vals, eq_vals, ineq_vals, slack_vals, soc0_vals, soc1_vals, lam_vals) in enumerate(results):
+            avg_setup_time = 0.0
+            avg_solve_time = 0.0
+            for i, (sol_vals, eq_vals, ineq_vals, slack_vals, soc0_vals, soc1_vals, lam_vals, setup_time, solve_time) in enumerate(results):
                 for v_id in range(len(sol_numpy)):
                     sol_numpy[v_id][i, ...] = sol_vals[v_id]
                 for c_id in range(len(eq_dual)):
@@ -314,6 +326,12 @@ def _BLOLayerFn(blolayer, solver_args, _compute_cos_sim, info):
                     soc_dual_1[j][i, ...] = soc1_vals[j]
                 for j in range(len(soc_lam)):
                     soc_lam[j][i, ...] = lam_vals[j]
+                
+                avg_setup_time += setup_time
+                avg_solve_time += solve_time
+
+            blolayer.forward_setup_time = avg_setup_time / B
+            blolayer.average_forward_solve_time = avg_solve_time / B
 
             ctx.sol_numpy = sol_numpy
             ctx.eq_dual = eq_dual
@@ -365,55 +383,216 @@ def _BLOLayerFn(blolayer, solver_args, _compute_cos_sim, info):
             new_active_dual = [np.empty((B,) + c.shape, dtype=float) for c in blolayer.active_eq_constraints_list[0]]
             new_scalar_ineq_dual = [np.empty_like(scalar_ineq_dual[j]) for j in range(num_scalar_ineq)]
 
-            def _solve_one_backward(i):
-                slot = i if blolayer.num_copies >= B else 0
-                if ctx.batch:
-                    params_i = [p[i] if bs > 0 else p for p, bs in zip(ctx.params_numpy, ctx.batch_sizes)]
+            iterative = False
+            if iterative:
+                ITERS = 20
+                LR = 1e-2
+                RHO = 10.0  # penalty strength (10~100)
+
+                base_provided = [*blolayer.variables_list[0], *blolayer.param_order_list[0]]
+                blolayer._eq_expr_torch = [
+                    TorchExpression(f, provided_vars_list=base_provided).torch_expression
+                    for f in blolayer.eq_functions_list[0]
+                ]
+                blolayer._ineq_expr_torch = [
+                    TorchExpression(g, provided_vars_list=base_provided).torch_expression
+                    for g in blolayer.scalar_ineq_functions_list[0]
+                ]
+
+                # soc_lin constraints depend on soc_dual params
+                if len(blolayer.soc_lin_constraints_list[0]) > 0:
+                    soc_provided = [
+                        *blolayer.variables_list[0],
+                        *blolayer.param_order_list[0],
+                        *blolayer.soc_dual_params_0_list[0],
+                        *blolayer.soc_dual_params_1_list[0],
+                    ]
+                    blolayer._soclin_expr_torch = [
+                        TorchExpression(c.expr, provided_vars_list=soc_provided).torch_expression
+                        for c in blolayer.soc_lin_constraints_list[0]
+                    ]
                 else:
-                    params_i = ctx.params_numpy
-                for p_val, param_obj in zip(params_i, blolayer.param_order_list[slot]):
-                    param_obj.value = p_val
+                    blolayer._soclin_expr_torch = []
 
-                for j, v in enumerate(blolayer.variables_list[slot]):
-                    blolayer.dvar_params_list[slot][j].value = dvars_numpy[j][i]
-                    v.value = ctx._warm_vars_list[i][j]
+            
+            def _iterative_solve_perturbed(i):
+                t0 = time.time()
 
-                for j in range(len(blolayer.eq_functions_list[slot])):
-                    blolayer.eq_dual_params_list[slot][j].value = eq_dual[j][i]
+                # warm start primal
+                vars_t = [
+                    to_torch(ctx._warm_vars_list[i][j], ctx.dtype, ctx.device).detach().requires_grad_(True)
+                    for j in range(len(blolayer.variables_list[0]))
+                ]
 
+                # params (detached)
+                params_i = slice_params_for_batch([p.detach() for p in ctx.params], ctx.batch_sizes, i)
+
+                # dvars term (detached)
+                dvars_i = [to_torch(dvars_numpy[j][i], ctx.dtype, ctx.device).detach() for j in range(len(vars_t))]
+
+                # inequality duals (use same cleaning as cvxpy-branch)
+                lam_list = []
+                mask_list = []
                 for j in range(num_scalar_ineq):
-                    lam = scalar_ineq_dual[j][i]
-                    lam = np.where(lam < -1e-6, lam, np.maximum(lam, 0.0))
+                    lam_np = scalar_ineq_dual[j][i]
+                    lam_np = np.where(lam_np < -1e-6, lam_np, np.maximum(lam_np, 0.0))
                     sl = scalar_ineq_slack[j][i]
-                    blolayer.scalar_ineq_dual_params_list[slot][j].value = lam
+
                     mask = (sl <= blolayer.slack_tol).astype(np.float64)
                     if mask.sum() > max(1, y_dim - num_eq):
                         k = int(max(1, y_dim - num_eq))
-                        lam_flat = lam.reshape(-1)
+                        lam_flat = lam_np.reshape(-1)
                         idx = np.argpartition(lam_flat, -k)[-k:]
                         mask_flat = np.zeros_like(lam_flat, dtype=np.float64)
                         mask_flat[idx] = 1.0
-                        mask = mask_flat.reshape(lam.shape)
-                    blolayer.scalar_active_mask_params_list[slot][j].value = mask
+                        mask = mask_flat.reshape(lam_np.shape)
 
-                for j in range(num_soc_cones):
-                    u = np.maximum(soc_dual_0[j][i], 0.0)
-                    v = soc_dual_1[j][i]
-                    blolayer.soc_dual_params_0_list[slot][j].value = u
-                    blolayer.soc_dual_params_1_list[slot][j].value = v
+                    lam_list.append(to_torch(lam_np, ctx.dtype, ctx.device).detach())
+                    mask_list.append(to_torch(mask, ctx.dtype, ctx.device).detach())
 
-                blolayer.perturbed_problem_list[slot].solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=1e-5)
+                # soc dual params (clamped like cvxpy-branch)
+                soc0 = [to_torch(np.maximum(soc_dual_0[j][i], 0.0), ctx.dtype, ctx.device).detach() for j in range(len(soc_dual_0))]
+                soc1 = [to_torch(soc_dual_1[j][i], ctx.dtype, ctx.device).detach() for j in range(len(soc_dual_1))]
 
-                st = blolayer.perturbed_problem_list[slot].status
-                if st not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
-                    raise RuntimeError(f"New bilevel status = {st}")
+                # eq_dual and soc_lam are NOT in perturbed objective -> set to zero for objective eval
+                # (shapes must match phi_torch signature)
+                eq0 = []
+                if len(blolayer._eq_expr_torch) > 0:
+                    # compute once for shapes
+                    with torch.no_grad():
+                        tmp = [f(*vars_t, *params_i) for f in blolayer._eq_expr_torch]
+                    eq0 = [torch.zeros_like(r) for r in tmp]
 
-                new_sol_vals = [v.value for v in blolayer.variables_list[slot]]
-                new_eq_vals = [c.dual_value for c in blolayer.eq_constraints_list[slot]]
-                new_act_vals = [c.dual_value for c in blolayer.active_eq_constraints_list[slot]]
-                new_lam_vals = [c.dual_value for c in blolayer.soc_lin_constraints_list[slot]]
-                return new_sol_vals, new_eq_vals, new_act_vals, new_lam_vals
+                soclam0 = []
+                if len(blolayer._soclin_expr_torch) > 0:
+                    with torch.no_grad():
+                        tmp = [c(*vars_t, *params_i, *soc0, *soc1) for c in blolayer._soclin_expr_torch]
+                    soclam0 = [torch.zeros_like(r) for r in tmp]
 
+                # multipliers for constraints (these are what we'll return as "dual-like" values)
+                nu = [torch.zeros_like(r) for r in eq0]             # eq constraints
+                eta = [torch.zeros_like(m) for m in mask_list]      # active eq constraints (mask*g==0), init shape placeholder
+                mu = [torch.zeros_like(r) for r in soclam0]         # soc_lin constraints
+
+                for _ in range(ITERS):
+                    # objective(new_objective) = phi_torch with eq0/soclam0 + dv_term
+                    base = blolayer.phi_torch(*vars_t, *params_i, *eq0, *lam_list, *soc0, *soc1, *soclam0)
+                    dv_term = sum((dv * v).sum() for dv, v in zip(dvars_i, vars_t)) / blolayer.alpha
+                    obj = base + dv_term
+
+                    # residuals: eq, active(mask*g), soc_lin
+                    eq_res = [f(*vars_t, *params_i) for f in blolayer._eq_expr_torch]
+                    g_res  = [g(*vars_t, *params_i) for g in blolayer._ineq_expr_torch]
+                    act_res = [m * r for m, r in zip(mask_list, g_res)]
+                    soc_res = [c(*vars_t, *params_i, *soc0, *soc1) for c in blolayer._soclin_expr_torch]
+
+                    # make eta shapes match act_res (first iter)
+                    if len(eta) == len(act_res) and len(act_res) > 0 and (eta[0].shape != act_res[0].shape):
+                        eta = [torch.zeros_like(r) for r in act_res]
+
+                    # augmented lagrangian
+                    L = obj
+                    for y, r in zip(nu, eq_res):
+                        L = L + (y * r).sum() + 0.5 * RHO * (r * r).sum()
+                    for y, r in zip(eta, act_res):
+                        L = L + (y * r).sum() + 0.5 * RHO * (r * r).sum()
+                    for y, r in zip(mu, soc_res):
+                        L = L + (y * r).sum() + 0.5 * RHO * (r * r).sum()
+
+                    grads = torch.autograd.grad(L, vars_t, allow_unused=True, retain_graph=False, create_graph=False)
+                    vars_t = [
+                        (v - LR * (g if g is not None else torch.zeros_like(v))).detach().requires_grad_(True)
+                        for v, g in zip(vars_t, grads)
+                    ]
+
+                    # multiplier ascent (detach residuals)
+                    with torch.no_grad():
+                        eq_res = [f(*vars_t, *params_i) for f in blolayer._eq_expr_torch]
+                        g_res  = [g(*vars_t, *params_i) for g in blolayer._ineq_expr_torch]
+                        act_res = [m * r for m, r in zip(mask_list, g_res)]
+                        soc_res = [c(*vars_t, *params_i, *soc0, *soc1) for c in blolayer._soclin_expr_torch]
+
+                        nu  = [(y + RHO * r).detach() for y, r in zip(nu, eq_res)]
+                        eta = [(y + RHO * r).detach() for y, r in zip(eta, act_res)]
+                        mu  = [(y + RHO * r).detach() for y, r in zip(mu, soc_res)]
+
+                solve_time = time.time() - t0
+                setup_time = 0.0
+
+                new_sol_vals = [to_numpy(v.detach()) for v in vars_t]
+
+                # IMPORTANT: return shapes aligned with downstream usage
+                new_eq_vals  = [to_numpy(y) for y in nu]                 # len = #eq
+                new_act_vals = [to_numpy(y) for y in eta]                # len = #ineq (active eq)
+                new_lam_vals = [to_numpy(y) for y in mu]                 # len = #soc_lin
+
+                # pad empty lists correctly if no constraints
+                if len(blolayer._eq_expr_torch) == 0:
+                    new_eq_vals = []
+                if num_scalar_ineq == 0:
+                    new_act_vals = []
+                if len(blolayer._soclin_expr_torch) == 0:
+                    new_lam_vals = []
+
+                return new_sol_vals, new_eq_vals, new_act_vals, new_lam_vals, setup_time, solve_time
+
+            def _solve_one_backward(i):
+                slot = i if blolayer.num_copies >= B else 0
+                
+                if iterative:
+                    return _iterative_solve_perturbed(i)
+                else:
+                    if ctx.batch:
+                        params_i = [p[i] if bs > 0 else p for p, bs in zip(ctx.params_numpy, ctx.batch_sizes)]
+                    else:
+                        params_i = ctx.params_numpy
+                    for p_val, param_obj in zip(params_i, blolayer.param_order_list[slot]):
+                        param_obj.value = p_val
+
+                    for j, v in enumerate(blolayer.variables_list[slot]):
+                        blolayer.dvar_params_list[slot][j].value = dvars_numpy[j][i]
+                        v.value = ctx._warm_vars_list[i][j]
+
+                    for j in range(len(blolayer.eq_functions_list[slot])):
+                        blolayer.eq_dual_params_list[slot][j].value = eq_dual[j][i]
+
+                    for j in range(num_scalar_ineq):
+                        lam = scalar_ineq_dual[j][i]
+                        lam = np.where(lam < -1e-6, lam, np.maximum(lam, 0.0))
+                        sl = scalar_ineq_slack[j][i]
+                        blolayer.scalar_ineq_dual_params_list[slot][j].value = lam
+                        mask = (sl <= blolayer.slack_tol).astype(np.float64)
+                        if mask.sum() > max(1, y_dim - num_eq):
+                            k = int(max(1, y_dim - num_eq))
+                            lam_flat = lam.reshape(-1)
+                            idx = np.argpartition(lam_flat, -k)[-k:]
+                            mask_flat = np.zeros_like(lam_flat, dtype=np.float64)
+                            mask_flat[idx] = 1.0
+                            mask = mask_flat.reshape(lam.shape)
+                        blolayer.scalar_active_mask_params_list[slot][j].value = mask
+
+                    for j in range(num_soc_cones):
+                        u = np.maximum(soc_dual_0[j][i], 0.0)
+                        v = soc_dual_1[j][i]
+                        blolayer.soc_dual_params_0_list[slot][j].value = u
+                        blolayer.soc_dual_params_1_list[slot][j].value = v
+                    
+                    blolayer.perturbed_problem_list[slot].solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=1e-3)
+
+                    st = blolayer.perturbed_problem_list[slot].status
+                    if st not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
+                        raise RuntimeError(f"New bilevel status = {st}")
+
+                    new_sol_vals = [v.value for v in blolayer.variables_list[slot]]
+                    new_eq_vals = [c.dual_value for c in blolayer.eq_constraints_list[slot]]
+                    new_act_vals = [c.dual_value for c in blolayer.active_eq_constraints_list[slot]]
+                    new_lam_vals = [c.dual_value for c in blolayer.soc_lin_constraints_list[slot]]
+
+                    setup_time = blolayer.perturbed_problem_list[slot].compilation_time
+                    solve_time = blolayer.perturbed_problem_list[slot].solver_stats.solve_time
+                    return new_sol_vals, new_eq_vals, new_act_vals, new_lam_vals, setup_time, solve_time
+
+            backward_solve_time_start = time.time()
             use_mt = (ThreadPool is not None) and (B > 1) and (blolayer.num_copies >= B)
             if use_mt:
                 with threadpool_limits(limits=1):
@@ -423,9 +602,13 @@ def _BLOLayerFn(blolayer, solver_args, _compute_cos_sim, info):
                     finally:
                         pool.close()
             else:
-                results = [_solve_one_backward(i) for i in range(B)]
+                raise ValueError("Not implemented")
+                # results = [_solve_one_backward(i) for i in range(B)]
+            blolayer.backward_solve_time = time.time() - backward_solve_time_start
 
-            for i, (new_sol_vals, new_eq_vals, new_act_vals, new_lam_vals) in enumerate(results):
+            avg_setup_time = 0.0
+            avg_solve_time = 0.0
+            for i, (new_sol_vals, new_eq_vals, new_act_vals, new_lam_vals, setup_time, solve_time) in enumerate(results):
                 for j in range(len(new_sol_lagrangian)):
                     new_sol_lagrangian[j][i, ...] = new_sol_vals[j]
                 for j in range(len(new_eq_dual)):
@@ -435,6 +618,12 @@ def _BLOLayerFn(blolayer, solver_args, _compute_cos_sim, info):
                     new_scalar_ineq_dual[j][i, ...] = new_act_vals[j]
                 for j in range(len(new_soc_lam)):
                     new_soc_lam[j][i, ...] = new_lam_vals[j]
+
+                avg_setup_time += setup_time
+                avg_solve_time += solve_time
+
+            blolayer.backward_setup_time = avg_setup_time / B
+            blolayer.average_backward_solve_time = avg_solve_time / B
 
             new_sol = [to_torch(v, ctx.dtype, ctx.device) for v in new_sol_lagrangian]
             new_eq_dual_torch = [to_torch(v, ctx.dtype, ctx.device) for v in new_eq_dual]
