@@ -8,6 +8,8 @@ import torch
 from cvxtorch import TorchExpression
 from cvxpylayers.torch import CvxpyLayer
 from cvxpy.constraints.second_order import SOC
+from cvxpy.constraints.exponential import ExpCone
+from cvxpy.constraints.psd import PSD
 import wandb
 from utils import to_numpy, to_torch, _dump_cvxpy, n_threads, slice_params_for_batch
 
@@ -72,7 +74,15 @@ def BLOLayer(
     eq_funcs = []
     scalar_ineq_funcs = []
     cone_ineq_funcs = []
-    cone_exprs = []
+    cone_exprs_soc = []
+    cone_exprs_exp = []
+    cone_exprs_psd = []
+    cone_exprs_other = []
+    all_cone_exprs = {}
+    all_cone_exprs["soc"] = cone_exprs_soc
+    all_cone_exprs["exp"] = cone_exprs_exp
+    all_cone_exprs["psd"] = cone_exprs_psd
+    all_cone_exprs["other"] = cone_exprs_other
     for c in problem.constraints:
         # Equality: g(x,θ) == 0 
         if isinstance(c, cp.constraints.zero.Equality):
@@ -87,21 +97,38 @@ def BLOLayer(
             # ExpCone: args = (x, y, z)
             # PSD: args = (X,)
             cone_ineq_funcs.append(c)
-            flat_blocks = []
-            for arg in c.args:
-                if arg.ndim == 1:
-                    flat_blocks.append(arg)
-                else:
-                    flat_blocks.append(cp.vec(arg))  # flatten to 1D
-            g_expr = cp.hstack(flat_blocks)
-            cone_exprs.append(g_expr)
-
+            if isinstance(c, SOC):
+                # t, X = c.args
+                # axis = c.axis
+                # g_ineq = cp.norm(X, 2, axis=axis) - t
+                # cone_exprs_soc.append(g_ineq)
+                cone_exprs_soc.append(c)
+            elif isinstance(c, ExpCone):
+                x, y, z = c.args
+                g_ineq = x + cp.rel_entr(y, z)
+                cone_exprs_exp.append(g_ineq)
+                cone_exprs_exp.append(-y)   # y >= 0
+                cone_exprs_exp.append(-z)   # z >= 0
+            elif isinstance(c, PSD):
+                X = c.args[0]
+                g_ineq = -cp.lambda_min(X)
+                cone_exprs_psd.append(g_ineq)
+            else:
+                flat_blocks = []
+                for arg in c.args:
+                    if arg.ndim == 1:
+                        flat_blocks.append(arg)
+                    else:
+                        flat_blocks.append(cp.vec(arg))  # flatten to 1D
+                g_expr = cp.hstack(flat_blocks)
+                cone_exprs_other.append(g_expr)
+            
     return _BLOLayer(
         objective=objective_expr,
         eq_functions=eq_funcs,
         scalar_ineq_functions=scalar_ineq_funcs,
         cone_constraints=cone_ineq_funcs,
-        cone_exprs=cone_exprs,
+        cone_exprs=all_cone_exprs,
         parameters=parameters,
         variables=variables,
         alpha=alpha,
@@ -195,17 +222,22 @@ class _BLOLayer(torch.nn.Module):
         self.scalar_active_mask_params = [
             cp.Parameter(shape=g.shape, nonneg=True) for g in self.scalar_ineq_functions
         ]
-
-         # cone's related parameters
-        self.cone_dual_params = [
-            cp.Parameter(shape=g.shape) for g in self.cone_exprs
-        ]
-        self.cone_primal_star = [
-            cp.Parameter(shape=g.shape) for g in self.cone_exprs
-        ]
-        self.cone_active_mask = [
-            cp.Parameter(nonneg=True) for _ in self.cone_exprs
-        ]
+        if len(cone_exprs["soc"]) > 0:
+            self.soc_constraints = cone_exprs["soc"]
+            self.soc_dual_params_0 = [cp.Parameter(shape=f.dual_variables[0].shape, nonneg=True) for f in self.soc_constraints]
+            self.soc_dual_params_1 = [cp.Parameter(shape=f.dual_variables[1].shape) for f in self.soc_constraints]
+            self.soc_lam_params = [cp.Parameter(shape=f.shape) for f in self.soc_constraints]
+            soc_dual_product = cp.sum([
+                cp.multiply(cp.pnorm(h.args[1].expr, p=2) - h.args[0].expr, du)
+                for du, h in zip(self.soc_dual_params_0, self.soc_constraints)
+            ])
+            self.soc_lin_constraints = [
+                (self.soc_dual_params_1[j].T @ self.soc_constraints[j].args[1].expr
+                + cp.multiply(self.soc_constraints[j].args[0].expr, self.soc_dual_params_0[j])) == 0
+                for j in range(len(self.soc_constraints))
+            ]
+        if len(cone_exprs["exp"]) > 0 or len(cone_exprs["psd"]) > 0 or len(cone_exprs["other"]) > 0:
+            raise ValueError("Not implemented")
 
         vars_dvars_product = cp.sum([
             cp.sum(cp.multiply(dv, v))
@@ -216,13 +248,9 @@ class _BLOLayer(torch.nn.Module):
             for lm, g in zip(self.scalar_ineq_dual_params,
                              self.scalar_ineq_functions)
         ])
-        cone_dual_product = cp.sum([
-            cp.sum(cp.multiply(y, g))
-            for y, g in zip(self.cone_dual_params, self.cone_exprs)
-        ])
 
         self.new_objective = (1.0 / self.alpha) * vars_dvars_product \
-                             + self.objective + scalar_ineq_dual_product + cone_dual_product
+                             + self.objective + scalar_ineq_dual_product + soc_dual_product
 
         self.active_eq_constraints = []
 
@@ -238,38 +266,30 @@ class _BLOLayer(torch.nn.Module):
                 cp.multiply(self.scalar_active_mask_params[j], g) == 0
             )
             print("active_eq_constraints[j] DPP?", self.active_eq_constraints[j].is_dcp(dpp=True))
-        # 2) cone：mask * <dual, g(x)-g*> == 0
-        for j, g in enumerate(self.cone_exprs):
-            dual_param = self.cone_dual_params[j]
-            g_star_param = self.cone_primal_star[j]
-            lin = cp.sum(cp.multiply(dual_param, g - g_star_param))
-            self.active_eq_constraints.append(
-                self.cone_active_mask[j] * lin == 0
-            )
-            print("active_eq_constraints[j] DPP?", self.active_eq_constraints[j].is_dcp(dpp=True))
 
         self.perturbed_problem = cp.Problem(
             cp.Minimize(self.new_objective),
-            self.eq_constraints + self.active_eq_constraints
+            self.eq_constraints + self.active_eq_constraints + self.soc_lin_constraints
         )
        
         print("perturbed_problem is_dcp:", self.perturbed_problem.is_dcp())
         print("perturbed_problem is_dpp:", self.perturbed_problem.is_dpp())
 
-        phi_expr = self.objective \
+        phi_expr = (self.objective
             + cp.sum([
                 cp.sum(cp.multiply(du, f))
                 for du, f in zip(self.eq_dual_params, self.eq_functions)
-            ]) \
+            ])
             + cp.sum([
                 cp.sum(cp.multiply(du, g))
                 for du, g in zip(self.scalar_ineq_dual_params,
                                  self.scalar_ineq_functions)
-            ]) \
-            + cp.sum([
-                cp.sum(cp.multiply(du, g))
-                for du, g in zip(self.cone_dual_params, self.cone_exprs)
             ])
+            + soc_dual_product # for new ghost objective \tilde{g}
+            + cp.sum([
+                cp.sum(cp.multiply(du, f.expr)) 
+                for du, f in zip(self.soc_lam_params, self.soc_lin_constraints)]) # for active cone dual product
+        )
 
         self.phi_torch = TorchExpression(
             phi_expr,
@@ -278,7 +298,9 @@ class _BLOLayer(torch.nn.Module):
                 *self.param_order,
                 *self.eq_dual_params,
                 *self.scalar_ineq_dual_params,
-                *self.cone_dual_params,
+                *self.soc_dual_params_0,
+                *self.soc_dual_params_1,
+                *self.soc_lam_params,
             ],
         ).torch_expression
 
@@ -421,14 +443,9 @@ def _BLOLayerFn(
                 np.empty((B,) + g.shape, dtype=float)
                 for g in blolayer.scalar_ineq_functions
             ]
-            cone_primal_vals = [
-                np.empty((B,) + g.shape, dtype=float)
-                for g in blolayer.cone_exprs
-            ]
-            cone_dual_vals = [
-                np.empty((B,) + g.shape, dtype=float)
-                for g in blolayer.cone_exprs
-            ]
+            soc_dual_0 = [np.empty((B,) + h.dual_variables[0].shape, dtype=float) for h in blolayer.soc_constraints]
+            soc_dual_1 = [np.empty((B,) + h.dual_variables[1].shape, dtype=float) for h in blolayer.soc_constraints]
+            soc_lam = [np.empty((B,) + h.shape, dtype=float) for h in blolayer.soc_lin_constraints]
 
             for i in range(B):
                 if ctx.batch:
@@ -472,45 +489,59 @@ def _BLOLayerFn(
                     s_val = np.maximum(s_val, 0.0)
                     scalar_ineq_slack[j][i, ...] = s_val
 
-                # cone primal & dual
-                for j, g_expr in enumerate(blolayer.cone_exprs):
-                    cone_primal_vals[j][i, ...] = np.array(g_expr.value, dtype=float)
-
-                for j, c in enumerate(blolayer.cone_constraints):
-                    dv_raw = c.dual_value
-
-                    if isinstance(dv_raw, (list, tuple)):
-                        flat_chunks = []
-                        for part in dv_raw:
-                            part_arr = np.asarray(part, dtype=float)
-                            flat_chunks.append(part_arr.reshape(-1))
-                        dv_flat = np.concatenate(flat_chunks, axis=0)
+                for c_id, c in enumerate(blolayer.soc_constraints):
+                    soc_dual_0[c_id][i, ...] = c.dual_value[0]
+                    if c.dual_value[1].shape[1] == 1:
+                        soc_dual_1[c_id][i, ...] = c.dual_value[1].reshape(-1)
                     else:
-                        dv_flat = np.asarray(dv_raw, dtype=float).reshape(-1)
+                        soc_dual_1[c_id][i, ...] = c.dual_value[1]
 
-                    g_shape = blolayer.cone_exprs[j].shape
-                    n_expected = int(np.prod(g_shape))
-                    if dv_flat.size != n_expected:
-                        print(
-                            f"[WARN] cone dual size mismatch at constraint {j}: "
-                            f"got {dv_flat.size}, expected {n_expected}"
-                        )
-                        exit()
-                        # if dv_flat.size > n_expected:
-                        #     dv_flat = dv_flat[:n_expected]
-                        # else:
-                        #     dv_flat = np.pad(dv_flat, (0, n_expected - dv_flat.size))
+                for c_id, c in enumerate(blolayer.soc_lin_constraints):
+                    soc_lam[c_id][i, ...] = c.dual_value
 
-                    dv_arr = dv_flat.reshape(g_shape)
-                    cone_dual_vals[j][i, ...] = dv_arr
+
+                # cone primal & dual
+                # for j, g_expr in enumerate(blolayer.cone_exprs):
+                #     cone_primal_vals[j][i, ...] = np.array(g_expr.value, dtype=float)
+
+                # for j, c in enumerate(blolayer.cone_constraints):
+                #     dv_raw = c.dual_value
+
+                #     if isinstance(dv_raw, (list, tuple)):
+                #         flat_chunks = []
+                #         for part in dv_raw:
+                #             part_arr = np.asarray(part, dtype=float)
+                #             flat_chunks.append(part_arr.reshape(-1))
+                #         dv_flat = np.concatenate(flat_chunks, axis=0)
+                #     else:
+                #         dv_flat = np.asarray(dv_raw, dtype=float).reshape(-1)
+
+                #     g_shape = blolayer.cone_exprs[j].shape
+                #     n_expected = int(np.prod(g_shape))
+                #     if dv_flat.size != n_expected:
+                #         print(
+                #             f"[WARN] cone dual size mismatch at constraint {j}: "
+                #             f"got {dv_flat.size}, expected {n_expected}"
+                #         )
+                #         exit()
+                #         # if dv_flat.size > n_expected:
+                #         #     dv_flat = dv_flat[:n_expected]
+                #         # else:
+                #         #     dv_flat = np.pad(dv_flat, (0, n_expected - dv_flat.size))
+
+                #     dv_arr = dv_flat.reshape(g_shape)
+                #     cone_dual_vals[j][i, ...] = dv_arr
 
 
             ctx.sol_numpy = sol_numpy
             ctx.eq_dual = eq_dual
             ctx.scalar_ineq_dual = scalar_ineq_dual
             ctx.scalar_ineq_slack = scalar_ineq_slack
-            ctx.cone_primal_vals = cone_primal_vals
-            ctx.cone_dual_vals = cone_dual_vals
+            # ctx.cone_primal_vals = cone_primal_vals
+            # ctx.cone_dual_vals = cone_dual_vals
+            ctx.soc_dual_0 = soc_dual_0
+            ctx.soc_dual_1 = soc_dual_1
+            ctx.soc_lam = soc_lam
 
             ctx.params_numpy = params_numpy
             ctx.params = params
@@ -542,8 +573,12 @@ def _BLOLayerFn(
             eq_dual = ctx.eq_dual
             scalar_ineq_dual = ctx.scalar_ineq_dual
             scalar_ineq_slack = ctx.scalar_ineq_slack
-            cone_primal_vals = ctx.cone_primal_vals
-            cone_dual_vals = ctx.cone_dual_vals
+            soc_dual_0 = ctx.soc_dual_0
+            soc_dual_1 = ctx.soc_dual_1
+            soc_lam = ctx.soc_lam
+
+            num_scalar_ineq = len(blolayer.scalar_ineq_functions)
+            num_soc_cones = len(blolayer.soc_constraints)
             
             y_dim = dvars_numpy[0].shape[1]
             if len(eq_dual) == 0:
@@ -561,51 +596,15 @@ def _BLOLayerFn(
                 q.requires_grad_(req_grad)
                 params_req.append(q)
                 req_grad_mask.append(req_grad)
-            
-
-            if _compute_cos_sim:
-                # compute ground truth gradient using cvxpylayer
-                cvxpylayer_problem = cp.Problem(
-                    cp.Minimize(blolayer.objective),
-                    constraints=(
-                        blolayer.eq_constraints
-                        + blolayer.scalar_ineq_constraints
-                        + blolayer.cone_constraints
-                    ),
-                )
-                _cvx_layer = CvxpyLayer(
-                    cvxpylayer_problem,
-                    parameters=blolayer.param_order,
-                    variables=blolayer.variables,
-                )
-                with torch.enable_grad():
-                    sol_tensors = _cvx_layer(*params_req)
-                if not isinstance(sol_tensors, (tuple, list)):
-                    sol_tensors = (sol_tensors,)
-                grad_outputs = [torch.zeros_like(out) if gv is None else gv for out, gv in zip(sol_tensors, dvars)]
-                inputs_for_grad = tuple(q for q, need in zip(params_req, req_grad_mask) if need)
-
-                ground_truth_grads = torch.autograd.grad(
-                    outputs=tuple(sol_tensors),
-                    inputs=inputs_for_grad,
-                    grad_outputs=tuple(grad_outputs),
-                    allow_unused=True,
-                    retain_graph=False,
-                )
 
             new_sol_lagrangian = [np.empty_like(sol_numpy[k]) for k in range(len(blolayer.variables))]
             new_eq_dual = [np.empty_like(eq_dual[k]) for k in range(len(blolayer.eq_constraints))]
-            num_scalar_ineq = len(blolayer.scalar_ineq_functions)
-            num_cones = len(blolayer.cone_exprs)
+            
+            new_soc_lam = [np.empty((B,) + con.expr.shape, dtype=float) for con in blolayer.soc_lin_constraints]
 
             new_scalar_ineq_dual = [
                 np.empty_like(scalar_ineq_dual[j]) 
                 for j in range(num_scalar_ineq)
-            ]
-
-            new_cone_dual_vals = [
-                np.empty_like(cone_dual_vals[j]) 
-                for j in range(num_cones)
             ]
 
             new_active_dual = [np.empty((B,) + c.shape, dtype=float) for c in blolayer.active_eq_constraints]
@@ -655,31 +654,20 @@ def _BLOLayerFn(
                         mask = mask_flat.reshape(lam.shape)
                     blolayer.scalar_active_mask_params[j].value = mask
 
-                _num_active_cones = 0
-                for j, _ in enumerate(blolayer.cone_exprs):
-                    g_star = ctx.cone_primal_vals[j][i, ...]   # g(x*)
-                    y_star = ctx.cone_dual_vals[j][i, ...]     # dual
-
-                    blolayer.cone_primal_star[j].value = g_star
-                    blolayer.cone_dual_params[j].value = y_star
-
-                    y_norm = float(np.linalg.norm(y_star.reshape(-1), ord=np.inf))
-                    if y_norm > blolayer.dual_cutoff:
-                        # Cone constraint is active
-                        blolayer.cone_active_mask[j].value = 1.0
-                        _num_active_cones += 1
-                    else:
-                        blolayer.cone_active_mask[j].value = 0.0
-
                 # print(f"Number of active ineq constraints: {blolayer.scalar_active_mask_params[0].value.sum()}")    
                 # print(f"Number of active cones: {_num_active_cones}")
 
                 for j, _ in enumerate(blolayer.eq_functions):
                     blolayer.eq_dual_params[j].value = eq_dual[j][i]
-                
-                # blolayer.perturbed_problem.solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0})
-                # blolayer.perturbed_problem.solve(solver=cp.SCS, warm_start=True, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
 
+                for j in range(num_soc_cones):
+                    u = soc_dual_0[j][i]
+                    v = soc_dual_1[j][i]
+
+                    u = np.maximum(u, 0.0)
+
+                    blolayer.soc_dual_params_0[j].value = u
+                    blolayer.soc_dual_params_1[j].value = v
                 # print(f"Backward part1 time: {time.time() - backward_part1}")
 
                 backward_part2 = time.time()
@@ -726,15 +714,11 @@ def _BLOLayerFn(
                     #     print(f"active inequality constraint {c_id} dual value is None")
                     # active_mask = np.array([a.value for a in blolayer.active_mask_params])
                     new_active_dual[c_id][i, ...] = c.dual_value
+                for c_id, c in enumerate(blolayer.soc_lin_constraints):
+                    new_soc_lam[c_id][i, ...] = c.dual_value
                 for j in range(num_scalar_ineq):
                     lam_new = new_active_dual[j][i, ...]
                     new_scalar_ineq_dual[j][i, ...] = lam_new
-
-                for j in range(num_cones):
-                    idx = num_scalar_ineq + j
-                    lam_cone = float(new_active_dual[idx][i, ...])
-                    y_old    = cone_dual_vals[j][i, ...]
-                    new_cone_dual_vals[j][i, ...] = (1.0 + lam_cone) * y_old
 
                 # print(f"Backward part3 time: {time.time() - backward_part3}")
 
@@ -754,13 +738,22 @@ def _BLOLayerFn(
                 to_torch(v, ctx.dtype, ctx.device) for v in new_scalar_ineq_dual
             ]
 
-            old_cone_dual_torch = [
+            old_soc_dual_0_torch = [
                 to_torch(v, ctx.dtype, ctx.device)
-                for v in cone_dual_vals if v is not None
+                for v in soc_dual_0 if v is not None
             ]
-            new_cone_dual_torch = [
+            old_soc_dual_1_torch = [
                 to_torch(v, ctx.dtype, ctx.device)
-                for v in new_cone_dual_vals
+                for v in soc_dual_1 if v is not None
+            ]
+            old_soc_lam_torch = [
+                to_torch(v, ctx.dtype, ctx.device)
+                for v in soc_lam if v is not None
+            ]
+
+            new_soc_lam_torch = [
+                to_torch(v, ctx.dtype, ctx.device)
+                for v in new_soc_lam
             ]
 
             start_time = time.time()
@@ -789,11 +782,15 @@ def _BLOLayerFn(
                     old_scalar_ineq_dual_i = [d[i] for d in old_scalar_ineq_dual_torch]
 
                     # cone dual
-                    new_cone_dual_i = [d[i] for d in new_cone_dual_torch]
-                    old_cone_dual_i = [d[i] for d in old_cone_dual_torch]
+                    new_soc_lam_i = [d[i] for d in new_soc_lam_torch]
+                    old_soc_lam_i = [d[i] for d in old_soc_lam_torch]
+                    # import pdb; pdb.set_trace()
 
-                    phi_new_i = blolayer.phi_torch(*vars_new_i, *params_i, *new_eq_dual_i, *new_scalar_ineq_dual_i, *new_cone_dual_i)
-                    phi_old_i = blolayer.phi_torch(*vars_old_i, *params_i, *old_eq_dual_i, *old_scalar_ineq_dual_i, *old_cone_dual_i)
+                    old_soc_dual_0_i = [d[i] for d in old_soc_dual_0_torch]
+                    old_soc_dual_1_i = [d[i] for d in old_soc_dual_1_torch]
+
+                    phi_new_i = blolayer.phi_torch(*vars_new_i, *params_i, *new_eq_dual_i, *new_scalar_ineq_dual_i, *old_soc_dual_0_i, *old_soc_dual_1_i, *new_soc_lam_i)
+                    phi_old_i = blolayer.phi_torch(*vars_old_i, *params_i, *old_eq_dual_i, *old_scalar_ineq_dual_i, *old_soc_dual_0_i, *old_soc_dual_1_i, *old_soc_lam_i)
                     loss +=  phi_new_i - phi_old_i
 
                 loss = blolayer.alpha * loss

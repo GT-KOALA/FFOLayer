@@ -96,9 +96,9 @@ def test_soc_blolayer_vs_cvxpy(seed=0):
 
     n = 50
     m = 300
-    k = 1
+    k = 3
     p_eq = 10
-    p_ineq = 50
+    p_ineq = 10
     
     x_cp = cp.Variable(n)
 
