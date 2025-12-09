@@ -43,6 +43,15 @@ def load_results(base_dir=BASE_DIR, methods=METHODS):
     for m in methods:
         pattern = os.path.join(base_dir, m, "*.csv")
         for fp in sorted(glob.glob(pattern)):
+            fname = os.path.basename(fp)
+            def grab(pat, cast=float):
+                mo = re.search(pat, fname)
+                return cast(mo.group(1)) if mo else np.nan
+
+            lr = grab(r"lr([0-9eE\.\-]+)", float)
+            if lr is not np.nan and lr != 0.001:
+                continue
+
             df = pd.read_csv(fp)
             # if m=="ffoqp_eq_schur_steps" or m=="ffoqp_eq_schur":
             #     m = "ffoqp_eq"
@@ -61,7 +70,7 @@ def load_results(base_dir=BASE_DIR, methods=METHODS):
 
             df["seed"] = grab(r"_seed(\d+)", int)
             df["ydim"] = grab(r"ydim(\d+)", int)
-            df["lr"]   = grab(r"lr([0-9eE\.\-]+)", float)
+            df["lr"]   = lr
             # df["eps"]  = grab(r"eps([0-9eE\.\-]+)", float)
 
             dfs.append(df)

@@ -197,6 +197,33 @@ class BLOLayer(torch.nn.Module):
         ]
         self.phi_torch = TorchExpression(phi_expr, provided_vars_list=provided).torch_expression
 
+        self.use_iterative_backward = True
+        if self.use_iterative_backward:
+            base_provided = [*self.variables_list[0], *self.param_order_list[0]]
+            self._eq_expr_torch = [
+                TorchExpression(f, provided_vars_list=base_provided).torch_expression
+                for f in self.eq_functions_list[0]
+            ]
+            self._ineq_expr_torch = [
+                TorchExpression(g, provided_vars_list=base_provided).torch_expression
+                for g in self.scalar_ineq_functions_list[0]
+            ]
+
+            # soc_lin constraints depend on soc_dual params
+            if len(self.soc_lin_constraints_list[0]) > 0:
+                soc_provided = [
+                    *self.variables_list[0],
+                    *self.param_order_list[0],
+                    *self.soc_dual_params_0_list[0],
+                    *self.soc_dual_params_1_list[0],
+                ]
+                self._soclin_expr_torch = [
+                    TorchExpression(c.expr, provided_vars_list=soc_provided).torch_expression
+                    for c in self.soc_lin_constraints_list[0]
+                ]
+            else:
+                self._soclin_expr_torch = []
+
         self.forward_setup_time = 0
         self.average_forward_solve_time = 0
         self.forward_solve_time = 0
@@ -383,39 +410,11 @@ def _BLOLayerFn(blolayer, solver_args, _compute_cos_sim, info):
             new_active_dual = [np.empty((B,) + c.shape, dtype=float) for c in blolayer.active_eq_constraints_list[0]]
             new_scalar_ineq_dual = [np.empty_like(scalar_ineq_dual[j]) for j in range(num_scalar_ineq)]
 
-            iterative = False
-            if iterative:
-                ITERS = 20
-                LR = 1e-2
-                RHO = 10.0  # penalty strength (10~100)
-
-                base_provided = [*blolayer.variables_list[0], *blolayer.param_order_list[0]]
-                blolayer._eq_expr_torch = [
-                    TorchExpression(f, provided_vars_list=base_provided).torch_expression
-                    for f in blolayer.eq_functions_list[0]
-                ]
-                blolayer._ineq_expr_torch = [
-                    TorchExpression(g, provided_vars_list=base_provided).torch_expression
-                    for g in blolayer.scalar_ineq_functions_list[0]
-                ]
-
-                # soc_lin constraints depend on soc_dual params
-                if len(blolayer.soc_lin_constraints_list[0]) > 0:
-                    soc_provided = [
-                        *blolayer.variables_list[0],
-                        *blolayer.param_order_list[0],
-                        *blolayer.soc_dual_params_0_list[0],
-                        *blolayer.soc_dual_params_1_list[0],
-                    ]
-                    blolayer._soclin_expr_torch = [
-                        TorchExpression(c.expr, provided_vars_list=soc_provided).torch_expression
-                        for c in blolayer.soc_lin_constraints_list[0]
-                    ]
-                else:
-                    blolayer._soclin_expr_torch = []
-
             
             def _iterative_solve_perturbed(i):
+                ITERS = 50
+                LR = 1e-2
+                RHO = 10.0  # penalty strength factor for augmented lagrangian
                 t0 = time.time()
 
                 # warm start primal
@@ -539,7 +538,7 @@ def _BLOLayerFn(blolayer, solver_args, _compute_cos_sim, info):
             def _solve_one_backward(i):
                 slot = i if blolayer.num_copies >= B else 0
                 
-                if iterative:
+                if blolayer.use_iterative_backward:
                     return _iterative_solve_perturbed(i)
                 else:
                     if ctx.batch:
