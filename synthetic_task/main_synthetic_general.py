@@ -193,7 +193,6 @@ if __name__ == '__main__':
                     train_df_loss_list.append(df_loss.item())
                     
 
-
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
                 #if epoch > 0:
                 optimizer.step()

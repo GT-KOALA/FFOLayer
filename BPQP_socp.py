@@ -44,7 +44,6 @@ def cvxpy_solve_qp_lin_soc(P, q, G, h, A, b, soc_a, soc_b, sign=1, eps=1e-5, max
                a_i^T x + ||x||_2 <= b_i   for i=1..m_soc
     Returns (x, nu_eq, lam_ineq, lam_soc_u)
     """
-    # numpy float64
     Pn = _sym(_np(P)).astype(np.float64)
     qn = (sign * _np(q).reshape(-1)).astype(np.float64)
 
@@ -149,14 +148,13 @@ def bpqp_backward_qp_lin_eq_soc(
     else:
         active_lin = np.zeros((0,), dtype=np.int64)
 
-    # active SOC constraints + Hessian correction
+    # active SOC constraints
     if msoc > 0:
         nx = float(np.linalg.norm(x))
         nx_safe = max(nx, 1e-12)
         resid_soc = (soc_a @ x) + nx - soc_b
         active_soc = np.where((resid_soc > -act_tol) | (lam_soc_u > act_tol))[0].astype(np.int64)
 
-        # t1 = sum of active SOC dual scalars (clipped for robustness)
         t1 = float(np.clip(lam_soc_u[active_soc], 0.0, np.inf).sum()) if active_soc.size > 0 else 0.0
 
         Hnorm = (1.0 / nx_safe) * np.eye(n) - (1.0 / (nx_safe**3)) * np.outer(x, x)
@@ -165,7 +163,6 @@ def bpqp_backward_qp_lin_eq_soc(
         active_soc = np.zeros((0,), dtype=np.int64)
         Pp = P
 
-    # build equality rows
     rows = []
     if active_lin.size > 0:
         rows.append(G[active_lin, :])
@@ -177,7 +174,6 @@ def bpqp_backward_qp_lin_eq_soc(
         g_soc = soc_a[active_soc, :] + (x[None, :] / nx_safe)  # (a_i + x/||x||)^T z = 0
         rows.append(g_soc)
 
-    # unconstrained
     if len(rows) == 0:
         try:
             z = -np.linalg.solve(Pp, grad)
