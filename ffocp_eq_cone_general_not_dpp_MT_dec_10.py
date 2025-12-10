@@ -177,27 +177,77 @@ class BLOLayer(torch.nn.Module):
             )
             self.perturbed_problem_list.append(perturbed_prob)
 
-        slot0 = 0
-        phi_expr = (
-            self.objective_list[slot0]
-            + cp.sum([cp.sum(cp.multiply(du, f)) for du, f in zip(self.eq_dual_params_list[slot0], self.eq_functions_list[slot0])])
-            + cp.sum([cp.sum(cp.multiply(du, g)) for du, g in zip(self.scalar_ineq_dual_params_list[slot0], self.scalar_ineq_functions_list[slot0])])
-            + self.soc_dual_product_list[slot0]
-            + cp.sum([cp.sum(cp.multiply(du, f.expr)) for du, f in zip(self.soc_lam_params_list[slot0], self.soc_lin_constraints_list[slot0])])
-        )
+        # Build per-slot TorchExpression objects (mirror ffocp_eq_multithread_ghost.py behaviour)
+        self.phi_torch_list = []
+        self.eq_dual_term_torch_list = []
+        self.scalar_ineq_dual_term_torch_list = []
+        self.soc_lam_term_torch_list = []
 
-        provided = [
-            *self.variables_list[slot0],
-            *self.param_order_list[slot0],
-            *self.eq_dual_params_list[slot0],
-            *self.scalar_ineq_dual_params_list[slot0],
-            *self.soc_dual_params_0_list[slot0],
-            *self.soc_dual_params_1_list[slot0],
-            *self.soc_lam_params_list[slot0],
-        ]
-        self.phi_torch = TorchExpression(phi_expr, provided_vars_list=provided).torch_expression
+        for slot in range(self.num_copies):
+            phi_expr = (
+                self.objective_list[slot]
+                + cp.sum([cp.sum(cp.multiply(du, f)) for du, f in zip(self.eq_dual_params_list[slot], self.eq_functions_list[slot])])
+                + cp.sum([cp.sum(cp.multiply(du, g)) for du, g in zip(self.scalar_ineq_dual_params_list[slot], self.scalar_ineq_functions_list[slot])])
+                + self.soc_dual_product_list[slot]
+                + cp.sum([cp.sum(cp.multiply(du, f.expr)) for du, f in zip(self.soc_lam_params_list[slot], self.soc_lin_constraints_list[slot])])
+            )
+            provided = [
+                *self.variables_list[slot],
+                *self.param_order_list[slot],
+                *self.eq_dual_params_list[slot],
+                *self.scalar_ineq_dual_params_list[slot],
+                *self.soc_dual_params_0_list[slot],
+                *self.soc_dual_params_1_list[slot],
+                *self.soc_lam_params_list[slot],
+            ]
+            self.phi_torch_list.append(TorchExpression(phi_expr, provided_vars_list=provided).torch_expression)
 
-        self.use_iterative_backward = True
+            # Equality dual term
+            eq_dual_product = cp.sum([cp.sum(cp.multiply(du, f)) for du, f in zip(self.eq_dual_params_list[slot], self.eq_functions_list[slot])])
+            if len(self.eq_functions_list[slot]) > 0:
+                self.eq_dual_term_torch_list.append(
+                    TorchExpression(
+                        eq_dual_product,
+                        provided_vars_list=[*self.variables_list[slot], *self.param_order_list[slot], *self.eq_dual_params_list[slot]],
+                    ).torch_expression
+                )
+            else:
+                self.eq_dual_term_torch_list.append(None)
+
+            # Scalar inequality dual term
+            scalar_ineq_dual_product = cp.sum([cp.sum(cp.multiply(du, g)) for du, g in zip(self.scalar_ineq_dual_params_list[slot], self.scalar_ineq_functions_list[slot])])
+            if len(self.scalar_ineq_functions_list[slot]) > 0:
+                self.scalar_ineq_dual_term_torch_list.append(
+                    TorchExpression(
+                        scalar_ineq_dual_product,
+                        provided_vars_list=[*self.variables_list[slot], *self.param_order_list[slot], *self.scalar_ineq_dual_params_list[slot]],
+                    ).torch_expression
+                )
+            else:
+                self.scalar_ineq_dual_term_torch_list.append(None)
+
+            # SOC lam term
+            soc_lam_product = cp.sum([cp.sum(cp.multiply(du, f.expr)) for du, f in zip(self.soc_lam_params_list[slot], self.soc_lin_constraints_list[slot])])
+            if len(self.soc_lin_constraints_list[slot]) > 0:
+                self.soc_lam_term_torch_list.append(
+                    TorchExpression(
+                        soc_lam_product,
+                        provided_vars_list=[
+                            *self.variables_list[slot],
+                            *self.param_order_list[slot],
+                            *self.soc_dual_params_0_list[slot],
+                            *self.soc_dual_params_1_list[slot],
+                            *self.soc_lam_params_list[slot],
+                        ],
+                    ).torch_expression
+                )
+            else:
+                self.soc_lam_term_torch_list.append(None)
+
+        # Backward compatibility (iterative solver currently uses slot0 expressions)
+        self.phi_torch = self.phi_torch_list[0]
+
+        self.use_iterative_backward = False
         if self.use_iterative_backward:
             base_provided = [*self.variables_list[0], *self.param_order_list[0]]
             self._eq_expr_torch = [
@@ -301,6 +351,7 @@ def _BLOLayerFn(blolayer, solver_args, _compute_cos_sim, info):
                 try:
                     blolayer.problem_list[slot].solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
                 except Exception:
+                    print("forward pass SCS failed, using OSQP")
                     blolayer.problem_list[slot].solve(solver=cp.OSQP, warm_start=False, verbose=False)
 
                 setup_time = blolayer.problem_list[slot].compilation_time
@@ -576,7 +627,7 @@ def _BLOLayerFn(blolayer, solver_args, _compute_cos_sim, info):
                         blolayer.soc_dual_params_0_list[slot][j].value = u
                         blolayer.soc_dual_params_1_list[slot][j].value = v
                     
-                    blolayer.perturbed_problem_list[slot].solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=1e-4)
+                    blolayer.perturbed_problem_list[slot].solve(solver=cp.SCS, warm_start=True, ignore_dpp=True, max_iters=2500, eps=1e-4)
 
                     st = blolayer.perturbed_problem_list[slot].status
                     if st not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
@@ -647,8 +698,9 @@ def _BLOLayerFn(blolayer, solver_args, _compute_cos_sim, info):
             loss = 0.0
             with torch.enable_grad():
                 for i in range(B):
+                    slot = i if blolayer.num_copies >= B else 0
                     vars_new_i = [v[i] for v in new_sol]
-                    vars_old_i = [to_torch(sol_numpy[j][i], ctx.dtype, ctx.device) for j in range(len(blolayer.variables_list[0]))]
+                    vars_old_i = [to_torch(sol_numpy[j][i], ctx.dtype, ctx.device) for j in range(len(blolayer.variables_list[slot]))]
                     params_i = slice_params_for_batch(params_req2, ctx.batch_sizes, i)
                     new_eq_dual_i = [d[i] for d in new_eq_dual_torch]
                     old_eq_dual_i = [d[i] for d in old_eq_dual_torch]
@@ -658,9 +710,37 @@ def _BLOLayerFn(blolayer, solver_args, _compute_cos_sim, info):
                     old_soc_lam_i = [d[i] for d in old_soc_lam_torch]
                     old_soc_dual_0_i = [d[i] for d in old_soc_dual_0_torch]
                     old_soc_dual_1_i = [d[i] for d in old_soc_dual_1_torch]
-                    phi_new_i = blolayer.phi_torch(*vars_new_i, *params_i, *new_eq_dual_i, *new_scalar_ineq_dual_i, *old_soc_dual_0_i, *old_soc_dual_1_i, *new_soc_lam_i)
-                    phi_old_i = blolayer.phi_torch(*vars_old_i, *params_i, *old_eq_dual_i, *old_scalar_ineq_dual_i, *old_soc_dual_0_i, *old_soc_dual_1_i, *old_soc_lam_i)
-                    loss = loss + (phi_new_i - phi_old_i)
+                    # Use OLD duals for both phi_new and phi_old to match BLOLayerMT behavior
+                    phi_new_i = blolayer.phi_torch_list[slot](*vars_new_i, *params_i, *old_eq_dual_i, *old_scalar_ineq_dual_i, *old_soc_dual_0_i, *old_soc_dual_1_i, *old_soc_lam_i)
+                    phi_old_i = blolayer.phi_torch_list[slot](*vars_old_i, *params_i, *old_eq_dual_i, *old_scalar_ineq_dual_i, *old_soc_dual_0_i, *old_soc_dual_1_i, *old_soc_lam_i)
+
+                    # Compute dual term differences using TorchExpression (evaluated at vars_old_i to match BLOLayerMT)
+                    eq_term = blolayer.eq_dual_term_torch_list[slot]
+                    if eq_term is not None:
+                        eq_dual_term_new_i = eq_term(*vars_old_i, *params_i, *new_eq_dual_i)
+                        eq_dual_term_old_i = eq_term(*vars_old_i, *params_i, *old_eq_dual_i)
+                    else:
+                        eq_dual_term_new_i = 0.0
+                        eq_dual_term_old_i = 0.0
+
+                    ineq_term = blolayer.scalar_ineq_dual_term_torch_list[slot]
+                    if ineq_term is not None:
+                        scalar_ineq_dual_term_new_i = ineq_term(*vars_old_i, *params_i, *new_scalar_ineq_dual_i)
+                        scalar_ineq_dual_term_old_i = ineq_term(*vars_old_i, *params_i, *old_scalar_ineq_dual_i)
+                    else:
+                        scalar_ineq_dual_term_new_i = 0.0
+                        scalar_ineq_dual_term_old_i = 0.0
+
+                    soc_term = blolayer.soc_lam_term_torch_list[slot]
+                    if soc_term is not None:
+                        soc_lam_term_new_i = soc_term(*vars_old_i, *params_i, *old_soc_dual_0_i, *old_soc_dual_1_i, *new_soc_lam_i)
+                        soc_lam_term_old_i = soc_term(*vars_old_i, *params_i, *old_soc_dual_0_i, *old_soc_dual_1_i, *old_soc_lam_i)
+                    else:
+                        soc_lam_term_new_i = 0.0
+                        soc_lam_term_old_i = 0.0
+
+                    loss = loss + phi_new_i + eq_dual_term_new_i + scalar_ineq_dual_term_new_i + soc_lam_term_new_i - phi_old_i - eq_dual_term_old_i - scalar_ineq_dual_term_old_i - soc_lam_term_old_i
+
                 loss = blolayer.alpha * loss
 
             grads_req = torch.autograd.grad(
