@@ -301,6 +301,7 @@ def _BLOLayerFn(blolayer, solver_args, _compute_cos_sim, info):
                 try:
                     blolayer.problem_list[slot].solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
                 except Exception:
+                    print("forward pass SCS failed, using OSQP")
                     blolayer.problem_list[slot].solve(solver=cp.OSQP, warm_start=False, verbose=False)
 
                 setup_time = blolayer.problem_list[slot].compilation_time
