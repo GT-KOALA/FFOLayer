@@ -8,11 +8,7 @@ import argparse
 from models import *
 from data import *
 
-
 from torch.utils.tensorboard import SummaryWriter
-
-
-       
 
 
 if __name__ == '__main__':

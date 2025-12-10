@@ -104,10 +104,6 @@ def BLOLayer(
         eq_funcs_list.append(eq_funcs)
         ineq_funcs_list.append(ineq_funcs)
 
-    print(len(problem_list))
-    print(len(ineq_funcs_list))
-    print(len(parameters_list))
-    print(len(variables_list))
     return _BLOLayer(
         objective_list=objective_expr_list,
         eq_functions_list=eq_funcs_list,
@@ -249,8 +245,6 @@ class _BLOLayer(torch.nn.Module):
         # print("ineq_dual_product DPP?", ineq_dual_product_list[0].is_dcp(dpp=True))
         # # assert(1==0)
 
-        
-        
         self.phi_torch_list = []
         self.ineq_dual_term_torch_list = []
         self.eq_dual_term_torch_list = []
@@ -421,15 +415,14 @@ def _BLOLayerFn(
                     if param_obj is None:
                         continue
                     param_obj.value = p_val
-
                 
                 try:
                     # blolayer.problem_list[i].solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0})
-                    # blolayer.problem_list[i].solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
-                    blolayer.problem_list[i].solve(solver=cp.OSQP, warm_start=False, verbose=False, eps_abs=1e-5, eps_rel=1e-5, max_iter=2500)
+                    blolayer.problem_list[i].solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=blolayer.eps)
+                    # blolayer.problem_list[i].solve(solver=cp.OSQP, ignore_dpp=True, warm_start=True, eps_abs=1e-8, eps_rel=1e-8, max_iter=2500)
                 except:
                     print("forward pass SCS failed, using OSQP")
-                    blolayer.problem_list[i].solve(solver=cp.OSQP, warm_start=False, verbose=False)
+                    blolayer.problem_list[i].solve(solver=cp.OSQP, ignore_dpp=True, verbose=False)
                 
                 
                 setup_time = blolayer.problem_list[i].compilation_time
@@ -591,8 +584,12 @@ def _BLOLayerFn(
                     blolayer.eq_dual_params_list[i][j].value = eq_dual[j][i]
 
                 # blolayer.perturbed_problem_list[i].solve(solver=cp.GUROBI, ignore_dpp=True, warm_start=True, **{"Threads": n_threads, "OutputFlag": 0})
-                # blolayer.perturbed_problem_list[i].solve(solver=cp.SCS, warm_start=True, ignore_dpp=True, max_iters=2500, eps=blolayer.backward_eps)
-                blolayer.perturbed_problem_list[i].solve(solver=cp.OSQP, warm_start=False, verbose=False, eps_abs=1e-3, eps_rel=1e-3, max_iter=2500)
+                blolayer.perturbed_problem_list[i].solve(solver=cp.SCS, warm_start=True, ignore_dpp=True, max_iters=2500, eps=blolayer.backward_eps)
+                
+                # for OSQP, we need to clear the solver cache to avoid numerical instability
+                # prob = blolayer.perturbed_problem_list[i]
+                # prob._solver_cache = {}
+                # blolayer.perturbed_problem_list[i].solve(solver=cp.OSQP, ignore_dpp=True, warm_start=True, eps_abs=1e-3, eps_rel=1e-3, max_iter=2500)
 
                 setup_time = blolayer.perturbed_problem_list[i].compilation_time
                 solve_time = blolayer.perturbed_problem_list[i].solver_stats.solve_time
@@ -608,7 +605,8 @@ def _BLOLayerFn(
                         sol_diffs.append(sol_diff)
                 except:
                     print("backward pass SCS failed, using OSQP")
-                    blolayer.perturbed_problem_list[i].solve(solver=cp.OSQP, eps_abs=1e-4, eps_rel=1e-4, warm_start=True, verbose=False)
+                    blolayer.perturbed_problem_list[i].solve(solver=cp.OSQP, ignore_dpp=True, eps_abs=1e-4, eps_rel=1e-4, verbose=False)
+                    import pdb; pdb.set_trace()
                     for j, v in enumerate(blolayer.variables_list[i]):
                         new_sol_lagrangian[j][i, ...] = v.value
                         sol_diff = np.linalg.norm(sol_numpy[j][i] - v.value)

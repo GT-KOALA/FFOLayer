@@ -202,7 +202,8 @@ class OptModel(nn.Module):
                             params_list.append(params)
                             variables_list.append(variables)
                         
-                        self.optlayer = BLOLayerMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12)
+                        # self.optlayer = BLOLayerMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12)
+                        self.optlayer = BLOLayerGeneralMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-8)
                         
                 elif layer_type==CVXPY_LAYER:
                     self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
@@ -346,7 +347,7 @@ class OptModel(nn.Module):
 
                 # Single SOC: ||z|| <= 1  -> soc_a = 0, soc_b = 1
                 soc_a_batched = torch.zeros((nBatch, 1, self.y_dim), device=self.Q.device, dtype=self.Q.dtype)
-                soc_b_batched = torch.ones((nBatch, 1),         device=self.Q.device, dtype=self.Q.dtype)
+                soc_b_batched = torch.ones((nBatch, 1), device=self.Q.device, dtype=self.Q.dtype)
 
                 params_batched = [Q_batched, q_pred, G_batched, h_batched, A_batched, b_batched, soc_a_batched, soc_b_batched]
                 sol = self.optlayer(*params_batched)
@@ -359,16 +360,8 @@ class OptModel(nn.Module):
 
                 A_batched = torch.zeros((nBatch, 0, self.y_dim), device=self.Q.device, dtype=self.Q.dtype)
                 b_batched = torch.zeros((nBatch, 0), device=self.Q.device, dtype=self.Q.dtype)
-
-                k = self.y_dim + 1
-                soc_a_batched = torch.zeros((nBatch, 1, k, self.y_dim), device=self.Q.device, dtype=self.Q.dtype)
-                soc_a_batched[:, 0, 1:, :] = torch.eye(self.y_dim, device=self.Q.device, dtype=self.Q.dtype)
-
-                soc_b_batched = torch.zeros((nBatch, 1, k), device=self.Q.device, dtype=self.Q.dtype)
-                soc_b_batched[:, 0, 0] = 1.0
-
-                params_batched = [Q_batched, q_pred, G_batched, h_batched,
-                                A_batched, b_batched, soc_a_batched, soc_b_batched]
+                
+                params_batched = [Q_batched, q_pred, G_batched, h_batched, A_batched, b_batched]
                 sol = self.optlayer(*params_batched)
                 if isinstance(sol, tuple):
                     sol = sol[0]
