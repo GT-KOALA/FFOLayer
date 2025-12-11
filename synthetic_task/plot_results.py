@@ -16,6 +16,8 @@ METHODS = [
     "qpth",
     "lpgd",
     "bpqp",
+    "dqp",
+    "altdiff",
     "ffoqp_eq_schur",
     "ffocp_eq",
 ]
@@ -24,6 +26,8 @@ METHODS_LEGEND = {
     "qpth": "qpth",
     "lpgd": "LPGD",
     "bpqp": "BPQP",
+    "dqp": "dQP",
+    "altdiff": "Alt-Diff",
     "ffoqp_eq_schur": "FFOQP",
     "ffocp_eq": "FFOCP",
 }
@@ -32,20 +36,22 @@ METHODS_STEPS = [method+"_steps" for method in METHODS]
 
 method_order = [METHODS_LEGEND[m] for m in METHODS]
 
-markers = ["o", "s", "D", "^", "v", "x"]
+markers = ["o", "s", "D", "^", "v", "x", "P", "s"]
 markers_dict = {method: markers[i] for i, method in enumerate(method_order)}
 
 LINEWIDTH = 1.5
 
 
-def load_results(base_dir=BASE_DIR, methods=METHODS):
+def load_results(base_dir=BASE_DIR, methods=METHODS, methods_legend=None):
+    if methods_legend is None:
+        methods_legend = METHODS_LEGEND
     dfs = []
     for m in methods:
         pattern = os.path.join(base_dir, m, "*.csv")
         for fp in sorted(glob.glob(pattern)):
             df = pd.read_csv(fp)
             m = m.removesuffix("_steps")
-            df["method"] = METHODS_LEGEND[m]
+            df["method"] = methods_legend[m]
 
             fname = os.path.basename(fp)
             def grab(pat, cast=float):
@@ -163,6 +169,55 @@ def plot_total_time_vs_method_by_ydim(df, plot_path, time_names=('forward_time',
             plot_path=plot_path,
             plot_name_tag=f"{tag}_ydim{y}"
         )
+
+def plot_total_time_vs_ydim_for_methods(
+    df,
+    methods_subset,
+    markers_dict=markers_dict,
+    time_names=('forward_time', 'backward_time'),
+    plot_path=BASE_DIR,
+    plot_name_tag="syn_methods_vs_ydim"
+):
+    os.makedirs(plot_path, exist_ok=True)
+    df_sub = df[df["method"].isin(methods_subset)].copy()
+    df_sub = df_sub.dropna(subset=["ydim"])
+    df_sub["ydim"] = df_sub["ydim"].astype(int)
+
+    df_group = (
+        df_sub
+        .groupby(["method", "ydim"])[list(time_names)]
+        .mean()
+        .reset_index()
+    )
+
+    df_group["total_time"] = df_group[time_names[0]] + df_group[time_names[1]]
+
+    plt.figure(figsize=(8, 5))
+
+    for idx, method in enumerate(methods_subset):
+        d = df_group[df_group["method"] == method].copy()
+        d = d.sort_values("ydim")
+        marker = markers_dict.get(method, markers[idx % len(markers)])
+        plt.plot(
+            d["ydim"],
+            d["total_time"],
+            label=method,
+            marker=marker,
+            linewidth=LINEWIDTH,
+        )
+
+    plt.xlabel("y_dim")
+    plt.ylabel("Total Time")
+    plt.title("Total Time vs y_dim (selected methods)")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(
+        f"{plot_path}/{plot_name_tag}_total_time_vs_ydim.pdf",
+        dpi=300,
+        bbox_inches="tight",
+    )
+    plt.close()
+
 
 def plot_total_loss_vs_method_by_ydim(df, plot_path):
     os.makedirs(plot_path, exist_ok=True)
