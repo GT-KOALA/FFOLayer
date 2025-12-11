@@ -233,9 +233,10 @@ class OptModel(nn.Module):
                             )
                     cvxpy_instance = {"variables":variables, "params":params, "problem":problem, "eq_constraints":[], "ineq_constraints":constraints,\
                         "eq_functions":eq_funcs, "ineq_functions":ineq_funcs}
+            
+                    # self.optlayer = ffoqp_eq_cst_schur.ffoqp(alpha=alpha, chunk_size=1, cvxpy_instance=cvxpy_instance)
+                    self.optlayer = ffoqp_eq_cst_schur.ffoqp(alpha=alpha, chunk_size=1, cvxpy_instance=cvxpy_instance, solver='OSQP_NATIVE')
                     
-                    
-                    self.optlayer = ffoqp_eq_cst_schur.ffoqp(alpha=alpha, chunk_size=1, cvxpy_instance=cvxpy_instance)
                 elif layer_type == FFOQP_EQ_PARALLELIZE:
                     self.optlayer = ffoqp_eq_cst_parallelize.ffoqp(alpha=alpha, chunk_size=1)
             else:
