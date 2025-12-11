@@ -11,3 +11,4 @@ FFOQP_EQ_PDIPM = "ffoqp_eq_pdipm"
 
 BPQP = "bpqp"
 ALTDIFF = "altdiff"
+DQP = "dqp"

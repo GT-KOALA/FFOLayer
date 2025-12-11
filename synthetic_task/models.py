@@ -9,8 +9,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-
-
+from dqp import dQP
 from ffocp_eq_timing import BLOLayer
 # from ffocp_eq_multithread import BLOLayer as BLOLayerMT
 from ffocp_eq_multithread_ghost import BLOLayer as BLOLayerMT
@@ -137,7 +136,7 @@ class OptModel(nn.Module):
         '''
         super().__init__()
         self.layer_type = layer_type
-        assert(layer_type in [FFOCP_EQ, CVXPY_LAYER, LPGD, QPTH, LPGD_QP, FFOQP_EQ, FFOQP_EQ_SCHUR, FFOQP_EQ_PARALLELIZE, FFOQP_EQ_PDIPM, BPQP, ALTDIFF])
+        assert(layer_type in [FFOCP_EQ, CVXPY_LAYER, LPGD, QPTH, LPGD_QP, FFOQP_EQ, FFOQP_EQ_SCHUR, FFOQP_EQ_PARALLELIZE, FFOQP_EQ_PDIPM, BPQP, ALTDIFF, DQP])
         
         self.constraint_learnable = constraint_learnable
         self.y_dim = opt_dim
@@ -185,7 +184,7 @@ class OptModel(nn.Module):
                 self.G = G.to(device)
                 self.h = h.to(device)
                 
-            if self.layer_type not in [QPTH, LPGD_QP, BPQP, ALTDIFF]:
+            if self.layer_type not in [QPTH, LPGD_QP, BPQP, ALTDIFF, DQP]:
                 problem, objective_fn, constraints, params, variables = setup_cvxpy_synthetic_problem(opt_dim, self.num_ineq)
         
                 multithread = True
@@ -246,6 +245,15 @@ class OptModel(nn.Module):
                     self.optlayer = BPQPLayer()
                 elif self.layer_type==ALTDIFF:
                     self.optlayer = AltDiffLayer()
+                elif self.layer_type==DQP:
+                    dQP_settings = dQP.build_settings(
+                        solve_type="dense",
+                        qp_solver="gurobi",
+                        # lin_solver="scipy LU",
+                    )
+                    self.optlayer = dQP.dQP_layer(settings=dQP_settings)
+                else:
+                    raise NotImplementedError("Not implemented for layer type: {}".format(layer_type))
         else:
             self.Q = torch.eye(opt_dim).to(device)#.double()
             G = torch.cat([torch.eye(opt_dim), -torch.eye(opt_dim), torch.ones(1,opt_dim)], dim=0).to(device)#.double()
@@ -315,6 +323,31 @@ class OptModel(nn.Module):
                 G_batched = self.G.unsqueeze(0).expand(nBatch, -1, -1)   # (batch, num_ineq, y_dim)
                 h_batched = h.unsqueeze(0).expand(nBatch, -1)       # (batch, num_ineq)
                 sol = self.optlayer(Q_batched, q_pred, G_batched, h_batched, self.A, self.b)
+            elif self.layer_type==DQP:
+                # Q: (y_dim, y_dim)
+                Q_batched = self.Q.unsqueeze(0).expand(nBatch, -1, -1)          # (batch, y_dim, y_dim)
+
+                # G: (num_ineq, y_dim)
+                G_batched = self.G.unsqueeze(0).expand(nBatch, -1, -1)          # (batch, num_ineq, y_dim)
+
+                # h: (num_ineq,)  ->  (batch, num_ineq)
+                h_batched = h.unsqueeze(0).expand(nBatch, -1)                   # (batch, num_ineq)
+
+                # q_pred: (batch, y_dim)
+                q_pred_batched = q_pred                                         # (batch, y_dim)
+
+                if self.A.numel() == 0:
+                    A_batched = None
+                    b_batched = None
+                else:
+                    # A: (num_eq, y_dim)
+                    A_batched = self.A.unsqueeze(0).expand(nBatch, -1, -1)      # (batch, num_eq, y_dim)
+                    # b: (num_eq,) -> (batch, num_eq)
+                    b_batched = self.b.unsqueeze(0).expand(nBatch, -1)          # (batch, num_eq)
+
+                sol, lambda_star, mu_star, _, _ = self.optlayer(
+                    Q_batched, q_pred_batched, G_batched, h_batched, A_batched, b_batched
+                )
             else:
                 # Expand constant params along batch dimension
                 Q_batched = self.Q.unsqueeze(0).expand(nBatch, -1, -1)   # (batch, y_dim, y_dim)
