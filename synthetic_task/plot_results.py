@@ -43,38 +43,24 @@ def load_results(base_dir=BASE_DIR, methods=METHODS):
     for m in methods:
         pattern = os.path.join(base_dir, m, "*.csv")
         for fp in sorted(glob.glob(pattern)):
-            fname = os.path.basename(fp)
-            def grab(pat, cast=float):
-                mo = re.search(pat, fname)
-                return cast(mo.group(1)) if mo else np.nan
-
-            lr = grab(r"lr([0-9eE\.\-]+)", float)
-            if lr is not np.nan and lr != 0.001:
-                continue
-
             df = pd.read_csv(fp)
-            # if m=="ffoqp_eq_schur_steps" or m=="ffoqp_eq_schur":
-            #     m = "ffoqp_eq"
-            new_m = m.removesuffix("_steps")
-            df["method"] = METHODS_LEGEND[new_m]
+            m = m.removesuffix("_steps")
+            df["method"] = METHODS_LEGEND[m]
 
             fname = os.path.basename(fp)
             def grab(pat, cast=float):
                 mo = re.search(pat, fname)
                 return cast(mo.group(1)) if mo else np.nan
-            
-            seed = grab(r"_seed(\d+)", int)
-            # Join with epoch 0 results to get the epoch 0 train df loss
-            # epoch_0_loss = EPOCH_0_DF[(EPOCH_0_DF["method"]==m) & (EPOCH_0_DF["seed"]==seed)]["train_df_loss"].values
-            # epoch_0_row = [0,0,epoch_0_loss,0,0,0,0,0,0]
 
             df["seed"] = grab(r"_seed(\d+)", int)
+            df["n"] = grab(r"n(\d+)", int)
+            df["lr"]   = grab(r"lr([0-9eE\.\-]+)", float)
             df["ydim"] = grab(r"ydim(\d+)", int)
-            df["lr"]   = lr
-            # df["eps"]  = grab(r"eps([0-9eE\.\-]+)", float)
-
             dfs.append(df)
-
+        
+        print("method: ", m)
+        # print(df)
+        
     if not dfs:
         raise FileNotFoundError(f"No CSVs found under {base_dir}.")
     return pd.concat(dfs, ignore_index=True, sort=False)

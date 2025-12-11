@@ -20,6 +20,9 @@ from typing import cast, List, Optional, Union
 from qpthlocal.solvers.pdipm import batch as pdipm_b
 from qpthlocal.solvers.pdipm.batch import KKTSolvers
 
+import scipy.sparse as sp
+import osqp
+
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.set_float32_matmul_precision("high")
 
@@ -38,6 +41,45 @@ torch.set_float32_matmul_precision("high")
 #         self.maxiter = maxiter
 #         self.solver = solver if solver is not None else QPSolvers.CVXPY
 #         self.lamb = lamb
+
+def _bpqp_np(x):
+    return x.detach().cpu().numpy()
+
+def _bpqp_sym(P):
+    return 0.5 * (P + P.T)
+
+def _bpqp_osqp_solve(P_csc, q_np, A_csc, l_np, u_np):
+    prob = osqp.OSQP()
+    prob.setup(P_csc, q_np, A_csc, l_np, u_np,
+               verbose=False,
+               eps_abs=1e-5,
+               eps_rel=1e-5,
+               eps_prim_inf=1e-5,
+               eps_dual_inf=1e-5)
+    res = prob.solve()
+    if res.x is None:
+        raise RuntimeError(res.info.status)
+    return res.x.astype(np.float64), res.y.astype(np.float64)
+
+def _bpqp_pack_osqp(P, q, G, h, A, b):
+    Pn, qn, Gn, hn, An, bn = [_bpqp_np(x) for x in [P, q, G, h, A, b]]
+    Pn = _bpqp_sym(Pn).astype(np.float64)
+    qn = qn.reshape(-1).astype(np.float64)
+    Gn = Gn.astype(np.float64)
+    hn = hn.reshape(-1).astype(np.float64)
+    An = An.astype(np.float64)
+    bn = bn.reshape(-1).astype(np.float64)
+    m, p = Gn.shape[0], An.shape[0]
+    if p > 0:
+        Aos = sp.csc_matrix(np.vstack([Gn, An]))
+        l = np.hstack([-np.inf * np.ones(m), bn])
+        u = np.hstack([hn, bn])
+    else:
+        Aos = sp.csc_matrix(Gn)
+        l = -np.inf * np.ones(m)
+        u = hn
+    return sp.csc_matrix(Pn), qn, Aos, l.astype(np.float64), u.astype(np.float64), m, p, Gn, hn, An
+
 
 def add_diag_(M, eps):
     if eps and eps > 0:
@@ -289,7 +331,40 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                         nus=lams
                     
                     slacks = [torch.from_numpy(arr).to(device=device, dtype=dtype) for arr in ineq_slack_residual][0]
+            elif nineq > 0 and solver == 'OSQP_NATIVE':
+                device = Q.device
+                dtype = Q.dtype
+                zhats = torch.empty(nBatch, nz, device=device, dtype=dtype)
+                lams = torch.empty(nBatch, nineq, device=device, dtype=dtype)
+                nus = torch.empty(nBatch, neq, device=device, dtype=dtype) if neq > 0 else torch.empty(0, device=device, dtype=dtype)
+                slacks = torch.empty(nBatch, nineq, device=device, dtype=dtype)
 
+                for i in range(nBatch):
+                    Pi = Q[i]
+                    qi = p[i]
+                    Gi = G[i]
+                    hi = h[i]
+                    if neq > 0:
+                        Ai = A[i]
+                        bi = b[i]
+                    else:
+                        Ai = Q.new_zeros((0, nz), device=device, dtype=dtype)
+                        bi = Q.new_zeros((0,), device=device, dtype=dtype)
+
+                    P_csc, qn, Aos, l, u, m_i, p_i, Gn, hn, An = _bpqp_pack_osqp(Pi, qi, Gi, hi, Ai, bi)
+                    x_np, y_np = _bpqp_osqp_solve(P_csc, qn, Aos, l, u)
+
+                    zhats[i] = torch.from_numpy(x_np).to(device=device, dtype=dtype)
+                    lam_np = y_np[:m_i]
+                    lams[i] = torch.from_numpy(lam_np).to(device=device, dtype=dtype)
+
+                    if neq > 0:
+                        nu_np = y_np[m_i:m_i + p_i]
+                        nus[i] = torch.from_numpy(nu_np).to(device=device, dtype=dtype)
+
+                    Gx = Gn @ x_np
+                    slack_np = np.maximum(hn - Gx, 0.0)
+                    slacks[i] = torch.from_numpy(slack_np).to(device=device, dtype=dtype)
             elif nineq > 0:
                 print("Using {} solver".format(solver))
                 zhats = torch.Tensor(nBatch, ctx.nz).type_as(Q)

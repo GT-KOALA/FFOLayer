@@ -197,7 +197,7 @@ class BLOLayer(torch.nn.Module):
         ]
         self.phi_torch = TorchExpression(phi_expr, provided_vars_list=provided).torch_expression
 
-        self.use_iterative_backward = True
+        self.use_iterative_backward = False
         if self.use_iterative_backward:
             base_provided = [*self.variables_list[0], *self.param_order_list[0]]
             self._eq_expr_torch = [
@@ -577,7 +577,7 @@ def _BLOLayerFn(blolayer, solver_args, _compute_cos_sim, info):
                         blolayer.soc_dual_params_0_list[slot][j].value = u
                         blolayer.soc_dual_params_1_list[slot][j].value = v
                     
-                    blolayer.perturbed_problem_list[slot].solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=1e-4)
+                    blolayer.perturbed_problem_list[slot].solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=1e-8)
 
                     st = blolayer.perturbed_problem_list[slot].status
                     if st not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
