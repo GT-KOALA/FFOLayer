@@ -653,6 +653,7 @@ def _BLOLayerFn(
                         mask_flat[idx] = 1.0
                         mask = mask_flat.reshape(lam.shape)
                     blolayer.scalar_active_mask_params[j].value = mask
+                    print(f"scalar_active_mask_params[j].value: {blolayer.scalar_active_mask_params[j].value}")
 
                 # print(f"Number of active ineq constraints: {blolayer.scalar_active_mask_params[0].value.sum()}")    
                 # print(f"Number of active cones: {_num_active_cones}")
@@ -677,7 +678,7 @@ def _BLOLayerFn(
                     backward_solver_args["warm_start"] = True
                 
                 # blolayer.perturbed_problem.solve(**backward_solver_args)
-                blolayer.perturbed_problem.solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=1e-5)
+                blolayer.perturbed_problem.solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=1e-12)
                 
                 # print(f"Backward actual solving time: {time.time() - backward_part2}")
 

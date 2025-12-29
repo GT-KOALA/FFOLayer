@@ -1,238 +1,281 @@
+import os
+import time
+import numpy as np
 import torch
 import cvxpy as cp
-import numpy as np
-import time
-import os
-
 from cvxpylayers.torch import CvxpyLayer
-from ffocp_eq_cone_general_not_dpp import BLOLayer
+from ffocp_eq_cone_general_not_dpp_cvxtorch import BLOLayer
+# from ffocp_eq_cone_general_not_dpp import BLOLayer
 
-torch.set_default_dtype(torch.double) 
+torch.set_default_dtype(torch.double)
 
-def random_problem(
-    n, 
-    m, 
-    k, 
-    p_eq=0, 
-    p_ineq=0, 
-    margin=1, 
-    scale=0.1,
-    local_fraction=0.1,
+
+# ============================================================
+# 1) Build CVXPY problem with cone constraints
+# ============================================================
+def build_conic_problem(
+    n: int,
+    m: int,
+    k: int,
+    p_eq: int,
+    p_ineq: int,
+    cone_type: str = "soc",
 ):
-    Q = torch.eye(n)
-    q = (scale * torch.randn(n)).requires_grad_()
+    x = cp.Variable(n)
 
-    x_star = torch.randn(n)
+    q = cp.Parameter(n)
+    # strongly convex objective
+    obj = cp.Minimize(0.5 * cp.sum_squares(x) + q.T @ x)
 
-    A_list, b_list, c_list, d_list = [], [], [], []
+    constraints = []
+    params = [q]
 
-    m_local = int(m * local_fraction)    
-    m_global = m - m_local
-    for i in range(m_local):
-        A = torch.zeros(k, n)
-        c = torch.zeros(n)
+    cone_type = cone_type.lower()
 
-        start = (i * k) % max(1, (n - k + 1))
-        end = start + k
-        idx = slice(start, end)
+    if cone_type == "soc":
+        # ||A_i x + b_i||_2 <= c_i^T x + d_i
+        A = [cp.Parameter((k, n)) for _ in range(m)]
+        b = [cp.Parameter(k) for _ in range(m)]
+        c = [cp.Parameter(n) for _ in range(m)]
+        d = [cp.Parameter() for _ in range(m)]
+        for i in range(m):
+            constraints.append(cp.SOC(c[i] @ x + d[i], A[i] @ x + b[i]))
+        params += A + b + c + d
 
-        A_block = scale * torch.randn(k, k)
-        c_block = scale * torch.randn(k)
+    elif cone_type == "nonneg":
+        # A_i x + b_i >= 0  (elementwise)
+        A = [cp.Parameter((k, n)) for _ in range(m)]
+        b = [cp.Parameter(k) for _ in range(m)]
+        for i in range(m):
+            constraints.append(A[i] @ x + b[i] >= 0)
+        params += A + b
 
-        A[:, idx] = A_block
-        c[idx] = c_block
+    elif cone_type == "exp":
+        # ExpCone(u, v, t) elementwise
+        A = [cp.Parameter((k, n)) for _ in range(m)]
+        b = [cp.Parameter(k) for _ in range(m)]
+        v = [cp.Parameter(k) for _ in range(m)]
+        t = [cp.Parameter(k) for _ in range(m)]
+        for i in range(m):
+            u = A[i] @ x + b[i]
+            constraints.append(cp.ExpCone(u, v[i], t[i]))
+        params += A + b + v + t
 
-        b = scale * torch.randn(k)
+    elif cone_type == "psd":
+        psd_dim = 4
+        r = psd_dim
+        S0 = cp.Parameter((r, r))
+        Sj = [cp.Parameter((r, r)) for _ in range(n)]
 
-        left = torch.linalg.norm(A @ x_star + b)
-        right_base = torch.dot(c, x_star)
-        d_val = (left - right_base + margin).item()
+        S = S0
+        for j in range(n):
+            S = S + x[j] * Sj[j]
 
-        A_list.append(A)
-        b_list.append(b)
-        c_list.append(c)
-        d_list.append(torch.tensor(d_val))
+        constraints.append(S >> 0)
+        params += [S0] + Sj
 
-    for i in range(m_global):
-        A = scale * torch.randn(k, n)
-        b = scale * torch.randn(k)
-        c = scale * torch.randn(n)
-
-        left = torch.linalg.norm(A @ x_star + b)
-        right_base = torch.dot(c, x_star)
-        d_val = (left - right_base + margin).item()
-
-        A_list.append(A)
-        b_list.append(b)
-        c_list.append(c)
-        d_list.append(torch.tensor(d_val))
+    else:
+        raise ValueError(f"Unsupported cone_type={cone_type}. Use 'soc'|'nonneg'|'exp' for now.")
 
     if p_eq > 0:
-        F = scale * torch.randn(p_eq, n)
-        g = F @ x_star
-    else:
-        F, g = None, None
+        F = cp.Parameter((p_eq, n))
+        g = cp.Parameter(p_eq)
+        constraints.append(F @ x == g)
+        params += [F, g]
 
     if p_ineq > 0:
-        H = torch.zeros(p_ineq, n)
+        H = cp.Parameter((p_ineq, n))
+        h = cp.Parameter(p_ineq)
+        constraints.append(H @ x <= h)
+        params += [H, h]
 
-        band_width = min(3, n)
-        for row in range(p_ineq):
-            col_start = row % n
-            cols = [(col_start + j) % n for j in range(band_width)]
-            H[row, cols] = scale * torch.randn(band_width)
+    prob = cp.Problem(obj, constraints)
+    return prob, x, params
 
-        base = H @ x_star
-        h = base + (margin + scale * torch.rand(p_ineq)).abs()
+
+# ============================================================
+# 2) Random-feasible parameter generator
+# ============================================================
+def random_params_for_cone(
+    n: int,
+    m: int,
+    k: int,
+    p_eq: int,
+    p_ineq: int,
+    cone_type: str,
+    scale: float = 0.1,
+    margin: float = 1.0,
+):
+    cone_type = cone_type.lower()
+    x_star = torch.randn(n, dtype=torch.double)
+
+    # learnable q (leaf)
+    q_param = torch.nn.Parameter(scale * torch.randn(n, dtype=torch.double))
+
+    params_torch = [q_param]
+
+    if cone_type == "soc":
+        A_list, b_list, c_list, d_list = [], [], [], []
+        for _ in range(m):
+            A = scale * torch.randn(k, n, dtype=torch.double)
+            b = scale * torch.randn(k, dtype=torch.double)
+            c = scale * torch.randn(n, dtype=torch.double)
+
+            left = torch.linalg.norm(A @ x_star + b)
+            right_base = torch.dot(c, x_star)
+            d_val = (left - right_base + margin).item()  # make strict feasible
+            d = torch.tensor(d_val, dtype=torch.double)
+
+            A_list.append(A); b_list.append(b); c_list.append(c); d_list.append(d)
+
+        params_torch += A_list + b_list + c_list + d_list
+
+    elif cone_type == "nonneg":
+        A_list, b_list = [], []
+        for _ in range(m):
+            A = scale * torch.randn(k, n, dtype=torch.double)
+            slack = margin + torch.rand(k, dtype=torch.double).abs()
+            b = -A @ x_star + slack
+            A_list.append(A); b_list.append(b)
+        params_torch += A_list + b_list
+
+    elif cone_type == "exp":
+        A_list, b_list, v_list, t_list = [], [], [], []
+        for _ in range(m):
+            A = scale * torch.randn(k, n, dtype=torch.double)
+            b = scale * torch.randn(k, dtype=torch.double)
+
+            u_star = A @ x_star + b
+            v = torch.ones(k, dtype=torch.double)
+            slack = margin + torch.rand(k, dtype=torch.double).abs()
+            t = torch.exp(u_star) + slack
+
+            A_list.append(A); b_list.append(b); v_list.append(v); t_list.append(t)
+
+        params_torch += A_list + b_list + v_list + t_list
+
+    elif cone_type == "psd":
+        psd_dim = 4
+        r = psd_dim
+
+        def sym(M):
+            return 0.5 * (M + M.T)
+
+        Sj_list = []
+        for _ in range(n):
+            M = scale * torch.randn(r, r, dtype=torch.double)
+            Sj_list.append(sym(M))
+
+        I = torch.eye(r, dtype=torch.double)
+        S0 = margin * I
+        for j in range(n):
+            S0 = S0 - x_star[j] * Sj_list[j]
+        S0 = sym(S0)
+
+        params_torch += [S0] + Sj_list
+
     else:
-        H, h = None, None
+        raise ValueError(f"Unsupported cone_type={cone_type} in generator.")
 
-    return Q, q, A_list, b_list, c_list, d_list, F, g, H, h
+    # Equalities: F x = g  (feasible at x_star)
+    if p_eq > 0:
+        F = scale * torch.randn(p_eq, n, dtype=torch.double)
+        g = F @ x_star
+        params_torch += [F, g]
+
+    # Inequalities: H x <= h  (feasible with margin)
+    if p_ineq > 0:
+        H = scale * torch.randn(p_ineq, n, dtype=torch.double)
+        slack = margin + torch.rand(p_ineq, dtype=torch.double).abs()
+        h = H @ x_star + slack
+        params_torch += [H, h]
+
+    return params_torch, q_param
 
 
-
-def test_soc_blolayer_vs_cvxpy(seed=0):
+# ============================================================
+# 3) Test: BLOLayer vs CvxpyLayer
+# ============================================================
+def test_blolayer_vs_cvxpy(seed=0):
     torch.manual_seed(seed)
+    np.random.seed(seed)
 
-    n = 50
-    m = 300
+    n = 20
+    m = 500
     k = 3
     p_eq = 10
     p_ineq = 10
-    
-    x_cp = cp.Variable(n)
 
-    Q = torch.eye(n)
-    q_cp = cp.Parameter(n)
+    cone_type = "psd"
 
-    # F_cp = cp.Parameter((p, n))
-    # g_cp = cp.Parameter(p)
-
-    A_cp = [cp.Parameter((k, n)) for _ in range(m)]
-    b_cp = [cp.Parameter(k)     for _ in range(m)]
-    c_cp = [cp.Parameter(n)     for _ in range(m)]
-    d_cp = [cp.Parameter()      for _ in range(m)]   # scalar
-
-    if p_eq > 0:
-        F_cp = cp.Parameter((p_eq, n))
-        g_eq_cp = cp.Parameter(p_eq)
-    else:
-        F_cp, g_eq_cp = None, None
-
-    if p_ineq > 0:
-        H_cp = cp.Parameter((p_ineq, n))
-        h_cp = cp.Parameter(p_ineq)
-    else:
-        H_cp, h_cp = None, None
-
-    objective_fn = 0.5 * cp.sum_squares(Q @ x_cp) + q_cp.T @ x_cp
-
-    constraints = []
-    for i in range(m):
-        constraints.append(
-            cp.SOC(c_cp[i] @ x_cp + d_cp[i],
-                   A_cp[i] @ x_cp + b_cp[i])
-        )
-
-    if p_eq > 0:
-        constraints.append(F_cp @ x_cp == g_eq_cp)
-
-    if p_ineq > 0:
-        constraints.append(H_cp @ x_cp <= h_cp)
-
-    problem = cp.Problem(cp.Minimize(objective_fn), constraints)
+    problem, x_cp, params_cp = build_conic_problem(
+        n=n, m=m, k=k, p_eq=p_eq, p_ineq=p_ineq, cone_type=cone_type
+    )
     assert problem.is_dpp()
 
-    params_cp = [q_cp] + A_cp + b_cp + c_cp + d_cp + [F_cp, g_eq_cp, H_cp, h_cp]
     cvx_layer = CvxpyLayer(problem, parameters=params_cp, variables=[x_cp])
     blolayer = BLOLayer(problem, parameters=params_cp, variables=[x_cp])
 
-    cpu_threads = os.cpu_count()
     repeat_times = 2
-    
-    # with torch.no_grad():
-    #     start_time = time.time()
-    #     # sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.GUROBI, "Threads": cpu_threads})
-    #     # sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.SCS, "max_iters": 2000, "eps": 1e-3, "warm_start": True})
-    #     # sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.MOSEK})
 
-    #     sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.SCS, "max_iters": 1000, "eps": 1e-4})
-    #     print(f"BLOLayer forward time with no grad: {time.time() - start_time}")
+    solver_args = {"solver": cp.SCS, "max_iters": 2000, "eps": 1e-8}
 
-    blo_total_fw_time = []
-    cvx_total_fw_time = []
-    blo_total_bw_time = []
-    cvx_total_bw_time = []
-    cos_sim_list = []
-    l2_diff_list = []
+    blo_fw, blo_bw = [], []
+    cvx_fw, cvx_bw = [], []
+    cos_sims, l2_diffs = [], []
+
     for _ in range(repeat_times):
-        _, q, A_list, b_list, c_list, d_list, F, g, H, h = random_problem(n, m, k, p_eq, p_ineq)
-        params_torch = [q] + A_list + b_list + c_list + d_list + [F, g, H, h]
-        optimizer = torch.optim.SGD([q], lr=0.1)
+        params_torch, q_param = random_params_for_cone(
+            n=n, m=m, k=k, p_eq=p_eq, p_ineq=p_ineq, cone_type=cone_type, scale=0.1, margin=1.0
+        )
 
-        blo_forward_start_time = time.time()
-        # sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.GUROBI, "Threads": cpu_threads, "BarConvTol": 1e-4, "FeasibilityTol": 1e-6, "OptimalityTol": 1e-6})
-        # sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.GUROBI, "Threads": cpu_threads})
-        # sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.MOSEK, "mosek_params": {'MSK_DPAR_OPTIMIZER_MAX_TIME':  1, }})
-        # sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.MOSEK})
-        sol_blo, = blolayer(*params_torch, solver_args={"solver": cp.SCS, "max_iters": 2000, "eps": 1e-8, "warm_start": True})
-        blo_forward_end_time = time.time()
-        print(f"BLOLayer forward time: {blo_forward_end_time - blo_forward_start_time}")
+        optimizer = torch.optim.SGD([q_param], lr=0.1)
+
+        # -------- BLOLayer --------
+        t0 = time.time()
+        sol_blo, = blolayer(*params_torch, solver_args=solver_args)
+        t1 = time.time()
 
         loss_blo = sol_blo.sum()
-        blo_loss_backward_start_time = time.time()
+        optimizer.zero_grad(set_to_none=True)
+        t2 = time.time()
         loss_blo.backward()
-        blo_loss_backward_end_time = time.time()
-        print(f"BLOLayer loss backward time: {blo_loss_backward_end_time - blo_loss_backward_start_time}")
+        t3 = time.time()
 
-        grad_blo = q.grad.detach().clone()
-        optimizer.zero_grad()
+        grad_blo = q_param.grad.detach().clone()
+        blo_fw.append(t1 - t0)
+        blo_bw.append(t3 - t2)
 
-        blo_total_fw_time.append(blo_forward_end_time - blo_forward_start_time)
-        blo_total_bw_time.append(blo_loss_backward_end_time - blo_loss_backward_start_time)
-        
-        cvx_forward_start_time = time.time()
-        sol_cvx, = cvx_layer(*params_torch, solver_args={"eps": 1e-10})
-        cvx_forward_end_time = time.time()
-        print(f"CvxpyLayer forward time: {cvx_forward_end_time - cvx_forward_start_time}")
+        # -------- CvxpyLayer --------
+        t0 = time.time()
+        sol_cvx, = cvx_layer(*params_torch)
+        t1 = time.time()
 
         loss_cvx = sol_cvx.sum()
-        cvx_loss_backward_start_time = time.time()
+        optimizer.zero_grad(set_to_none=True)
+        t2 = time.time()
         loss_cvx.backward()
-        cvx_loss_backward_end_time = time.time()
-        print(f"CvxpyLayer loss backward time: {cvx_loss_backward_end_time - cvx_loss_backward_start_time}")
+        t3 = time.time()
 
-        grad_cvx = q.grad.detach().clone()
-        optimizer.zero_grad()
+        grad_cvx = q_param.grad.detach().clone()
+        cvx_fw.append(t1 - t0)
+        cvx_bw.append(t3 - t2)
 
-        # print("CvxpyLayer gradient:", grad_cvx)
-        cvx_total_fw_time.append(cvx_forward_end_time - cvx_forward_start_time)
-        cvx_total_bw_time.append(cvx_loss_backward_end_time - cvx_loss_backward_start_time)
-
-
+        # -------- Compare gradients --------
         est = grad_blo.reshape(-1)
-        gt  = grad_cvx.reshape(-1)
+        gt = grad_cvx.reshape(-1)
+        denom = (est.norm() * gt.norm()).clamp_min(1e-12)
+        cos_sims.append((est @ gt) / denom)
+        l2_diffs.append((est - gt).norm())
 
-        eps = 1e-12
-        denom = (est.norm() * gt.norm()).clamp_min(eps)
-        cos_sim = torch.dot(est, gt) / denom
-        l2_diff = (est - gt).norm()
+    print(f"cone_type = {cone_type}")
+    print(f"CvxpyLayer forward times: {cvx_fw}, mean={np.mean(cvx_fw):.4f}")
+    print(f"CvxpyLayer backward times: {cvx_bw}, mean={np.mean(cvx_bw):.4f}")
+    print(f"BLOLayer  forward times: {blo_fw}, mean={np.mean(blo_fw):.4f}")
+    print(f"BLOLayer  backward times: {blo_bw}, mean={np.mean(blo_bw):.4f}")
+    print(f"cosine similarity: {cos_sims}")
+    print(f"l2 diffs: {l2_diffs}")
 
-        cos_sim_list.append(cos_sim)
-        l2_diff_list.append(l2_diff)
-
-    print(f"CvxpyLayer total forward time: {cvx_total_fw_time}")
-    print(f"CvxpyLayer total backward time: {cvx_total_bw_time}")
-    print(f"CvxpyLayer mean forward time: {np.mean(cvx_total_fw_time[1:])}")
-    print(f"CvxpyLayer mean backward time: {np.mean(cvx_total_bw_time[1:])}")
-    print(f"--------------------------------")
-    print(f"BLOLayer total forward time: {blo_total_fw_time}")
-    print(f"BLOLayer total backward time: {blo_total_bw_time}")
-    print(f"BLOLayer mean forward time: {np.mean(blo_total_fw_time[1:])}")
-    print(f"BLOLayer mean backward time: {np.mean(blo_total_bw_time[1:])}")
-
-    print(f"cosine similarity: {cos_sim_list}")
 
 if __name__ == "__main__":
-    for seed in range(1):
-        test_soc_blolayer_vs_cvxpy(seed)
+    test_blolayer_vs_cvxpy(seed=0)
