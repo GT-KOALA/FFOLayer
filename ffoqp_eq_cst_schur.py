@@ -19,6 +19,7 @@ from qpthlocal.solvers.pdipm.batch import KKTSolvers
 import scipy.sparse as sp
 import osqp
 from dqp import dQP
+import qpsolvers
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.set_float32_matmul_precision("high")
@@ -280,13 +281,19 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                         # lin_solver="scipy LU",
                     )
                 dQP_layer = dQP.dQP_layer(settings=dQP_settings)
-                zhats, lams, nus, solve_time, total_forward_time = dQP_layer(
+                zhats, nus, lams, solve_time, total_forward_time = dQP_layer(
                     Q, p, G, h, A, b
                 )
-                Gz = torch.bmm(G.to(dtype=zhats.dtype), zhats.unsqueeze(-1)).squeeze(-1)
-                slacks = torch.clamp(h.to(dtype=zhats.dtype) - Gz, min=0.0)
+                if isinstance(nus, list):
+                    nus = torch.vstack(nus)
+                zhats = zhats.to(dtype=Q.dtype)
+                lams = lams.to(dtype=Q.dtype)
+                nus = nus.to(dtype=Q.dtype)
+                
+                Gz = torch.bmm(G, zhats.unsqueeze(-1)).squeeze(-1)
+                slacks = torch.clamp(h - Gz, min=0.0)
 
-                slacks = slacks.to(device=zhats.device, dtype=zhats.dtype)            
+                slacks = slacks.to(device=zhats.device, dtype=Q.dtype)            
             elif nineq > 0 and solver == 'PDIPM':
                 if cvxpy_instance is None:
                     ctx.Q_LU, ctx.S_LU, ctx.R = pdipm_b.pre_factor_kkt(Q, G, A)
@@ -466,7 +473,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
 
             if exact_bwd_sol:
                 # kkt_schur_fast_fn = torch.compile(kkt_schur_fast, mode="max-autotune")
-
+                delta_directions = delta_directions.to(Q.dtype)
                 _dzhat, _dnu = kkt_schur_fast(Q, G_active, delta_directions)
                 dzhat.copy_(_dzhat.unsqueeze(-1))
                 dnu.copy_(_dnu)
