@@ -202,7 +202,7 @@ class OptModel(nn.Module):
                             variables_list.append(variables)
                         
                         # self.optlayer = BLOLayerMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12)
-                        self.optlayer = BLOLayerGeneralMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-8)
+                        self.optlayer = BLOLayerGeneralMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12)
                         
                 elif layer_type==CVXPY_LAYER:
                     self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
@@ -314,7 +314,7 @@ class OptModel(nn.Module):
             h = self.h
         
         if self.is_QP:
-            if self.layer_type in [QPTH, FFOQP_EQ, FFOQP_EQ_SCHUR, FFOQP_EQ_PARALLELIZE, FFOQP_EQ_PDIPM]:
+            if self.layer_type in [QPTH, FFOQP_EQ, FFOQP_EQ_SCHUR, FFOQP_EQ_PARALLELIZE]:
                 sol = self.optlayer(
                     self.Q, q_pred, self.G, h, self.A, self.b
                 )
@@ -323,6 +323,29 @@ class OptModel(nn.Module):
                 G_batched = self.G.unsqueeze(0).expand(nBatch, -1, -1)   # (batch, num_ineq, y_dim)
                 h_batched = h.unsqueeze(0).expand(nBatch, -1)       # (batch, num_ineq)
                 sol = self.optlayer(Q_batched, q_pred, G_batched, h_batched, self.A, self.b)
+            elif self.layer_type==FFOQP_EQ_PDIPM:
+                # G: (num_ineq, y_dim)
+                G_batched = self.G.unsqueeze(0).expand(nBatch, -1, -1)          # (batch, num_ineq, y_dim)
+
+                # h: (num_ineq,)  ->  (batch, num_ineq)
+                h_batched = h.unsqueeze(0).expand(nBatch, -1)                   # (batch, num_ineq)
+
+                # q_pred: (batch, y_dim)
+                q_pred_batched = q_pred                                         # (batch, y_dim)
+
+                if self.A.numel() == 0:
+                    A_batched = None
+                    b_batched = None
+                else:
+                    # A: (num_eq, y_dim)
+                    A_batched = self.A.unsqueeze(0).expand(nBatch, -1, -1)      # (batch, num_eq, y_dim)
+                    # b: (num_eq,) -> (batch, num_eq)
+                    b_batched = self.b.unsqueeze(0).expand(nBatch, -1)          # (batch, num_eq)
+                
+                sol = self.optlayer(
+                    Q_batched, q_pred_batched, G_batched, h_batched, A_batched, b_batched
+                )
+                
             elif self.layer_type==DQP:
                 # Q: (y_dim, y_dim)
                 Q_batched = self.Q.unsqueeze(0).expand(nBatch, -1, -1)          # (batch, y_dim, y_dim)

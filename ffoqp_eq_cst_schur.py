@@ -8,10 +8,6 @@ import numpy as np
 import scipy
 import time
 import cvxpy as cp
-# import solvers
-# from qpthlocal.solvers.pdipm import batch as pdipm_b
-# from qpthlocal.solvers.pdipm import spbatch as pdipm_spb
-# from qpthlocal.solvers.cvxpy import forward_single_np
 from utils import forward_single_np_eq_cst, forward_batch_np
 from enum import Enum
 from utils import extract_nBatch, expandParam
@@ -22,6 +18,7 @@ from qpthlocal.solvers.pdipm.batch import KKTSolvers
 
 import scipy.sparse as sp
 import osqp
+from dqp import dQP
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.set_float32_matmul_precision("high")
@@ -270,7 +267,21 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
             assert(neq > 0 or nineq > 0)
             ctx.neq, ctx.nineq, ctx.nz = neq, nineq, nz
 
-            if nineq > 0 and solver == 'PDIPM':
+            if nineq > 0 and solver == 'dQP':
+                dQP_settings = dQP.build_settings(
+                        solve_type="dense",
+                        qp_solver="gurobi",
+                        # lin_solver="scipy LU",
+                    )
+                dQP_layer = dQP.dQP_layer(settings=dQP_settings)
+                zhats, lams, nus, solve_time, total_forward_time = dQP_layer(
+                    Q, p, G, h, A, b
+                )
+                Gz = torch.bmm(G, zhats.unsqueeze(-1)).squeeze(-1)   # (B, nineq)
+                slacks = torch.clamp(h - Gz, min=0.0)                # (B, nineq)
+
+                slacks = slacks.to(device=zhats.device, dtype=zhats.dtype)            
+            elif nineq > 0 and solver == 'PDIPM':
                 if cvxpy_instance is None:
                     ctx.Q_LU, ctx.S_LU, ctx.R = pdipm_b.pre_factor_kkt(Q, G, A)
                     zhats, nus, lams, slacks = pdipm_b.forward(
