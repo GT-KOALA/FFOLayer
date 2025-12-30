@@ -4,7 +4,7 @@
 seeds=($(seq 1))   # ← ARRAY, not string
 
 ydims=(800)
-batchSizes=(1 2 4 8 16 32)
+batchSizes=(16 32)
 
 for seed in "${seeds[@]}"; do
   for ydim in "${ydims[@]}"; do

@@ -235,7 +235,7 @@ def kkt_schur_fast(Q, A, delta, L_cached=None, eps_q=1e-8, eps_s=1e-10,
     return dz, dlam
 
 def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=False, chunk_size=100,
-          solver='PDIPM', solver_opts={"verbose": False},
+          solver='qpsolvers', solver_opts={"verbose": False},
           exact_bwd_sol=True, slack_cutoff=1e-8, cvxpy_instance=None):
     """ -> kamo
     change lamb to alpha to prevent confusion
@@ -253,8 +253,14 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
             p, _ = expandParam(p_, nBatch, 2)
             G, _ = expandParam(G_, nBatch, 3)
             h, _ = expandParam(h_, nBatch, 2)
-            A, _ = expandParam(A_, nBatch, 3)
-            b, _ = expandParam(b_, nBatch, 2)
+            if A_.numel() > 0:
+                A, _ = expandParam(A_, nBatch, 3)
+            else:
+                A = None
+            if b_.numel() > 0:
+                b, _ = expandParam(b_, nBatch, 2)
+            else:
+                b = None
 
             if check_Q_spd:
                 try:
@@ -263,11 +269,11 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                     raise RuntimeError('Q is not SPD.')
 
             _, nineq, nz = G.size()
-            neq = A.size(1) if A.nelement() > 0 else 0
+            neq = A.size(1) if A is not None else 0
             assert(neq > 0 or nineq > 0)
             ctx.neq, ctx.nineq, ctx.nz = neq, nineq, nz
 
-            if nineq > 0 and solver == 'dQP':
+            if nineq > 0 and solver == 'qpsolvers':
                 dQP_settings = dQP.build_settings(
                         solve_type="dense",
                         qp_solver="gurobi",
@@ -277,8 +283,8 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                 zhats, lams, nus, solve_time, total_forward_time = dQP_layer(
                     Q, p, G, h, A, b
                 )
-                Gz = torch.bmm(G, zhats.unsqueeze(-1)).squeeze(-1)   # (B, nineq)
-                slacks = torch.clamp(h - Gz, min=0.0)                # (B, nineq)
+                Gz = torch.bmm(G.to(dtype=zhats.dtype), zhats.unsqueeze(-1)).squeeze(-1)
+                slacks = torch.clamp(h.to(dtype=zhats.dtype) - Gz, min=0.0)
 
                 slacks = slacks.to(device=zhats.device, dtype=zhats.dtype)            
             elif nineq > 0 and solver == 'PDIPM':
