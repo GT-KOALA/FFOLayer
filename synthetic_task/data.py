@@ -16,5 +16,5 @@ def genData(device, input_dim=64, output_dim=10, num_samples=2048, batch_size=32
     training_size = int(num_samples * train_split)
     
     train_loader = torch.utils.data.DataLoader(dataset[:training_size], batch_size=batch_size, shuffle=True)
-    test_loader  = torch.utils.data.DataLoader(dataset[training_size:], batch_size=batch_size, shuffle=True)
+    test_loader  = torch.utils.data.DataLoader(dataset[training_size:], batch_size=batch_size, shuffle=False)
     return train_loader, test_loader

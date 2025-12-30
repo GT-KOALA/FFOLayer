@@ -47,10 +47,13 @@ class MLP(nn.Module):
 
     def forward(self, x):
         x = x.view(-1, self.input_dim)
-        # x = self.activation(self.fc1(x)) ###SHING HEI: removed batch norm for batch size 1
-        x = self.activation(self.batch_norm1(self.fc1(x)))
-        # x = self.activation(self.fc2(x))
-        x = self.activation(self.batch_norm2(self.fc2(x)))
+        batch_size = x.shape[0]
+        if batch_size > 1:
+            x = self.activation(self.batch_norm1(self.fc1(x)))
+            x = self.activation(self.batch_norm2(self.fc2(x)))
+        else:
+            x = self.activation(self.fc1(x))
+            x = self.activation(self.fc2(x))
         x = torch.clamp(self.fc3(x), min=-self.bound, max=self.bound)
         return x
     
