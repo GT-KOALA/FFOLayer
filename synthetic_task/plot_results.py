@@ -62,6 +62,7 @@ def load_results(base_dir=BASE_DIR, methods=METHODS, methods_legend=None):
             df["n"] = grab(r"n(\d+)", int)
             df["lr"]   = grab(r"lr([0-9eE\.\-]+)", float)
             df["ydim"] = grab(r"ydim(\d+)", int)
+            df["backwardTol"] = grab(r"backwardTol([0-9eE\+\-\.]+?)(?:_|\.csv)", float)
             dfs.append(df)
         
         print("method: ", m)
@@ -129,12 +130,10 @@ def plot_total_time_vs_method(df, time_names=['forward_time', 'backward_time'], 
     
 def plot_loss_vs_epoch(df, loss_metric_name, iteration_name='epoch', plot_path=BASE_DIR, plot_name_tag="", loss_range=None, stride=50):
     df_avg_epoch = df.groupby(['method', iteration_name])[[loss_metric_name]].mean().reset_index()
-    # print(df_avg_epoch)
     
+    # print(df_avg_epoch)
     # epoch_0_loss = -0.00950829166918993
     # df_avg_epoch.loc[df_avg_epoch[iteration_name] == 0, loss_metric_name] = epoch_0_loss
-
-    
     # df_avg_epoch = df_avg_epoch[df_avg_epoch[iteration_name] % stride == 0]
 
     # --- Forward Time Figure ---
@@ -155,7 +154,6 @@ def plot_loss_vs_epoch(df, loss_metric_name, iteration_name='epoch', plot_path=B
         ax.set_ylim(loss_range)
     
     plt.savefig(f"{plot_path}/{plot_name_tag}_{loss_metric_name}_vs_{iteration_name}.pdf", dpi=300, bbox_inches='tight')
-    # plt.savefig(f"{plot_path}/{plot_name_tag}_{loss_metric_name}_vs_{iteration_name}.png", dpi=300, bbox_inches='tight')
     plt.close()
 
 def plot_total_time_vs_method_by_ydim(df, plot_path, time_names=('forward_time','backward_time'), tag="syn"):
@@ -233,21 +231,98 @@ def plot_total_loss_vs_method_by_ydim(df, plot_path):
         )
 
 
+def plot_total_time_vs_method_by_backwardTol(df, time_names=['forward_time', 'backward_time'],
+                                             plot_path=BASE_DIR, plot_name_tag=""):
+    """
+    Plots stacked bar chart of total time vs backward tolerance for each method.
+    Each method is plotted separately in a for-loop to ensure only one method at a time.
+    """
+    os.makedirs(plot_path, exist_ok=True)
+
+    df = df.dropna(subset=['method', 'backwardTol']).copy()
+
+    # Get unique methods
+    methods = df['method'].unique()
+    assert(len(methods)==1)
+
+    for method in methods:
+        d = df[df['method'] == method].copy()
+
+        # Remove duplicate backwardTol per method (take mean)
+        d = d.groupby('backwardTol')[time_names].mean().reset_index()
+
+        plt.figure(figsize=(8,5))
+        plt.bar(d['backwardTol'].astype(str), d[time_names[0]], label=time_names[0], color=palette[0])
+        plt.bar(d['backwardTol'].astype(str), d[time_names[1]], bottom=d[time_names[0]],
+                label=time_names[1], color=palette[1])
+        
+        plt.xlabel("backwardTol")
+        plt.ylabel("Time")
+        plt.title(f"Total Time vs backwardTol ({method})")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(f"{plot_path}/{plot_name_tag}_total_time_vs_backwardTol_{method}.pdf", 
+                    dpi=300, bbox_inches='tight')
+        plt.close()
+
+def plot_loss_vs_method_by_backwardTol(df, loss_metric_name,
+                                       plot_path=BASE_DIR, plot_name_tag="",
+                                       loss_range=None):
+    """
+    Plots line plot of loss vs backwardTol for each method.
+    Ensures one method at a time and no duplicate backwardTol.
+    """
+    os.makedirs(plot_path, exist_ok=True)
+
+    df = df.dropna(subset=['method', 'backwardTol']).copy()
+    methods = df['method'].unique()
+    assert(len(methods)==1)
+
+    for method in methods:
+        d = df[df['method'] == method].copy()
+        d = d.groupby('backwardTol')[[loss_metric_name]].mean().reset_index()
+
+        plt.figure(figsize=(8,5))
+        plt.plot(d['backwardTol'], d[loss_metric_name], linewidth=LINEWIDTH)
+        plt.xlabel("backwardTol")
+        plt.ylabel(loss_metric_name)
+        plt.title(f"{loss_metric_name} vs backwardTol ({method})")
+        if loss_range is not None:
+            plt.ylim(loss_range)
+        plt.tight_layout()
+        plt.savefig(f"{plot_path}/{plot_name_tag}_{loss_metric_name}_vs_backwardTol_{method}.pdf",
+                    dpi=300, bbox_inches='tight')
+        plt.close()
+        
+def plot_loss_vs_epoch_method_tol(df, loss_metric='train_df_loss', iteration='epoch',
+                                  plot_path=BASE_DIR, plot_name_tag=""):
+    """
+    Simple: plot loss vs epoch, each line = one (method, backwardTol) tuple.
+    """
+    import matplotlib.pyplot as plt
+    import os
+
+    os.makedirs(plot_path, exist_ok=True)
+    df = df.dropna(subset=['method', 'backwardTol', iteration, loss_metric])
+
+    plt.figure(figsize=(8,5))
+
+    for (method, tol), d in df.groupby(['method', 'backwardTol']):
+        d = d.sort_values(iteration)
+        plt.plot(d[iteration], d[loss_metric], label=f"{method}-tol{tol:.0e}")
+
+    plt.xlabel(iteration)
+    plt.ylabel(loss_metric)
+    plt.title(f"{loss_metric} vs {iteration}")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(f"{plot_path}/{plot_name_tag}_{loss_metric}_vs_{iteration}.pdf", dpi=300, bbox_inches='tight')
+    plt.close()
+
+
         
 
 if __name__=="__main__":
-    # df = load_results()
-    # df = df.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
-
-    #plot_time_vs_ydim(df)
-    # plot_time_vs_method(df)
-    # plot_time_vs_epoch(df)
-    # plot_total_time_vs_method(df)
-    # plot_losse_vs_epoch(df)
-
-    # plot_opt_time_vs_epoch(df)
-    # plot_opt_time_vs_epoch_per_method(df)
-    
     
     df = load_results()
     df = df.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
@@ -255,20 +330,21 @@ if __name__=="__main__":
 
     print("loaded df")
 
-    # plot_time_vs_method(df, time_names=['forward_time', 'backward_time'], plot_path=BASE_DIR)
-    # plot_time_vs_epoch(df, time_names=['forward_time', 'backward_time'], iteration_name='epoch', plot_path=BASE_DIR)
-    plot_total_time_vs_method(df, time_names=['forward_time', 'backward_time'], plot_path=BASE_DIR, plot_name_tag="syn")
-    # plot_losse_vs_epoch(df, "train_df_loss", iteration_name='epoch', plot_path=BASE_DIR)
-    
+    # plot_total_time_vs_method(df, time_names=['forward_time', 'backward_time'], plot_path=BASE_DIR, plot_name_tag="syn")
+    plot_total_time_vs_method_by_backwardTol(df, time_names=['forward_time', 'backward_time'],
+                                             plot_path=BASE_DIR, plot_name_tag="syn")
+   
+   #########################################
     df = load_results(methods=METHODS_STEPS)
     df = df.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
     df["method"] = pd.Categorical(df["method"], categories=method_order, ordered=True)
 
     print("loaded df steps")
 
-    # plot_time_vs_method(df, time_names=['forward_solve_time', 'backward_solve_time'], plot_path=BASE_DIR, plot_name_tag="steps_solve")
-    # plot_time_vs_method(df, time_names=['forward_setup_time', 'backward_setup_time'], plot_path=BASE_DIR, plot_name_tag="steps_setup")
-    plot_total_time_vs_method(df, time_names=['forward_solve_time', 'backward_solve_time'], plot_path=BASE_DIR, plot_name_tag="syn_steps_solve")
-    plot_total_time_vs_method(df, time_names=['forward_setup_time', 'backward_setup_time'], plot_path=BASE_DIR, plot_name_tag="syn_steps_setup")
-    plot_loss_vs_epoch(df, "train_df_loss", iteration_name='iter', plot_path=BASE_DIR, plot_name_tag="syn_steps")
+    # plot_total_time_vs_method(df, time_names=['forward_solve_time', 'backward_solve_time'], plot_path=BASE_DIR, plot_name_tag="syn_steps_solve")
+    # plot_total_time_vs_method(df, time_names=['forward_setup_time', 'backward_setup_time'], plot_path=BASE_DIR, plot_name_tag="syn_steps_setup")
+    
+    # plot_loss_vs_epoch(df, "train_df_loss", iteration_name='iter', plot_path=BASE_DIR, plot_name_tag="syn_steps")
+    plot_loss_vs_epoch_method_tol(df, loss_metric='train_df_loss', iteration='epoch',
+                                  plot_path=BASE_DIR, plot_name_tag="syn_steps")
     

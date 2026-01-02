@@ -1,3 +1,8 @@
+# import cvxtorch
+# from cvxtorch import TorchExpression
+# import cvxtorch, sys
+# print("11111 cvxtorch file:", getattr(cvxtorch, "__file__", "NO FILE"))
+# print("sys.path[0]:", sys.path[0])
 import numpy as np
 import torch
 import time
@@ -19,6 +24,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate') #0.00001
     parser.add_argument('--batch_size', type=int, default=32, help='batch size')
     parser.add_argument('--ydim', type=int, default=1000, help='dimension of y')
+    parser.add_argument('--backward_eps', type=float, default=1e-5, help='backward tolerance') #0.00001
     
     parser.add_argument('--alpha', type=float, default=100, help='alpha')
     parser.add_argument('--dual_cutoff', type=float, default=1e-3, help='dual cutoff')
@@ -39,6 +45,7 @@ if __name__ == '__main__':
     alpha = args.alpha
     dual_cutoff = args.dual_cutoff
     slack_tol = args.slack_tol
+    backward_eps = args.backward_eps
 
     # Set random seed for reproducibility
     device = torch.device(args.device) if torch.cuda.is_available() else torch.device('cpu')
@@ -57,7 +64,7 @@ if __name__ == '__main__':
     # print(len(train_loader))
     # assert(len(train_loader)*batch_size == 1600)
 
-    model = OptModel(input_dim, ydim, layer_type=method, constraint_learnable=(args.learn_constraint==1), batch_size=batch_size, device=device, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, is_QP=True).to(device)
+    model = OptModel(input_dim, ydim, layer_type=method, constraint_learnable=(args.learn_constraint==1), batch_size=batch_size, device=device, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, backward_eps=backward_eps, is_QP=True).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0)
     loss_fn = torch.nn.MSELoss()
     
@@ -67,9 +74,8 @@ if __name__ == '__main__':
     deltas = [torch.zeros_like(parameter) for parameter in model.parameters()]
     gradients = [torch.zeros_like(parameter) for parameter in model.parameters()]
 
-
     directory = '../synthetic_results_{}{}/{}/'.format(args.batch_size, args.suffix, method)
-    filename = '{}_ydim{}_lr{}_seed{}.csv'.format(method, ydim, learning_rate, seed)
+    filename = '{}_ydim{}_lr{}_seed{}_backwardTol{}.csv'.format(method, ydim, learning_rate, seed, backward_eps)
     # if os.path.exists(directory + filename):
     #     os.remove(directory + filename)
 

@@ -192,6 +192,7 @@ class OptModel(nn.Module):
                     if not multithread:
                         self.optlayer = BLOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, solver_name="SCS")
                     else:
+                        print("HELLO")
                         problem_list = []
                         params_list = []
                         variables_list = []
@@ -202,7 +203,7 @@ class OptModel(nn.Module):
                             variables_list.append(variables)
                         
                         # self.optlayer = BLOLayerMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12)
-                        self.optlayer = BLOLayerGeneralMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-8)
+                        self.optlayer = BLOLayerGeneralMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-8, backward_eps=backward_eps)
                         
                 elif layer_type==CVXPY_LAYER:
                     self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
@@ -289,7 +290,7 @@ class OptModel(nn.Module):
                         params_list.append(params)
                         variables_list.append(variables)
                     
-                    self.optlayer = BLOLayerGeneralMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12)
+                    self.optlayer = BLOLayerGeneralMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, backward_eps=backward_eps)
             elif layer_type==CVXPY_LAYER:
                 self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
             elif layer_type==LPGD:

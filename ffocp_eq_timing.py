@@ -1,3 +1,13 @@
+
+import sys
+matches = [p for p in sys.path if (p and __import__('os').path.isdir(__import__('os').path.join(p,'cvxtorch')))]
+print("########## \_(OAO)_/ ############", "\n".join(matches))
+
+import cvxtorch, sys
+print("22222 cvxtorch file:", getattr(cvxtorch, "__file__", "NO FILE"))
+print("sys.path[0]:", sys.path[0])
+
+from cvxtorch import TorchExpression
 import time
 import cvxpy as cp
 import numpy as np
@@ -5,7 +15,7 @@ import os
 from copy import copy
 
 import torch
-from cvxtorch import TorchExpression
+
 from cvxpylayers.torch import CvxpyLayer
 import wandb
 from utils import to_numpy, to_torch, _dump_cvxpy, n_threads, slice_params_for_batch

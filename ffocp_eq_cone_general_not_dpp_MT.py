@@ -55,7 +55,7 @@ def _compare_grads(params_req, grads, ground_truth_grads):
 #     return _BLOLayer(problem_list, parameters_list, variables_list, alpha, dual_cutoff, slack_tol, eps, compute_cos_sim)
 
 class BLOLayer(torch.nn.Module):
-    def __init__(self, problem_list, parameters_list, variables_list, alpha, dual_cutoff, slack_tol, eps, _compute_cos_sim=False):
+    def __init__(self, problem_list, parameters_list, variables_list, alpha, dual_cutoff, slack_tol, eps, backward_eps, _compute_cos_sim=False):
         super().__init__()
         self.problem_list_in = problem_list
         self.param_order_list = parameters_list
@@ -64,6 +64,7 @@ class BLOLayer(torch.nn.Module):
         self.dual_cutoff = float(dual_cutoff)
         self.slack_tol = float(slack_tol)
         self.eps = float(eps)
+        self.backward_eps = float(backward_eps)
         self._compute_cos_sim = bool(_compute_cos_sim)
         self.num_copies = len(self.problem_list_in)
 
@@ -577,7 +578,7 @@ def _BLOLayerFn(blolayer, solver_args, _compute_cos_sim, info):
                         blolayer.soc_dual_params_0_list[slot][j].value = u
                         blolayer.soc_dual_params_1_list[slot][j].value = v
                     
-                    blolayer.perturbed_problem_list[slot].solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=1e-8)
+                    blolayer.perturbed_problem_list[slot].solve(solver=cp.SCS, warm_start=False, ignore_dpp=True, max_iters=2500, eps=blolayer.backward_eps) #1e-8
 
                     st = blolayer.perturbed_problem_list[slot].status
                     if st not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
