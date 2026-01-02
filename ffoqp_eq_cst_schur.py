@@ -8,10 +8,6 @@ import numpy as np
 import scipy
 import time
 import cvxpy as cp
-# import solvers
-# from qpthlocal.solvers.pdipm import batch as pdipm_b
-# from qpthlocal.solvers.pdipm import spbatch as pdipm_spb
-# from qpthlocal.solvers.cvxpy import forward_single_np
 from utils import forward_single_np_eq_cst, forward_batch_np
 from enum import Enum
 from utils import extract_nBatch, expandParam
@@ -22,6 +18,8 @@ from qpthlocal.solvers.pdipm.batch import KKTSolvers
 
 import scipy.sparse as sp
 import osqp
+from dqp import dQP
+import qpsolvers
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.set_float32_matmul_precision("high")
@@ -238,7 +236,7 @@ def kkt_schur_fast(Q, A, delta, L_cached=None, eps_q=1e-8, eps_s=1e-10,
     return dz, dlam
 
 def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=False, chunk_size=100,
-          solver='PDIPM', solver_opts={"verbose": False},
+          solver='qpsolvers', solver_opts={"verbose": False},
           exact_bwd_sol=True, slack_cutoff=1e-8, cvxpy_instance=None):
     """ -> kamo
     change lamb to alpha to prevent confusion
@@ -256,8 +254,14 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
             p, _ = expandParam(p_, nBatch, 2)
             G, _ = expandParam(G_, nBatch, 3)
             h, _ = expandParam(h_, nBatch, 2)
-            A, _ = expandParam(A_, nBatch, 3)
-            b, _ = expandParam(b_, nBatch, 2)
+            if A_.numel() > 0:
+                A, _ = expandParam(A_, nBatch, 3)
+            else:
+                A = None
+            if b_.numel() > 0:
+                b, _ = expandParam(b_, nBatch, 2)
+            else:
+                b = None
 
             if check_Q_spd:
                 try:
@@ -266,11 +270,41 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                     raise RuntimeError('Q is not SPD.')
 
             _, nineq, nz = G.size()
-            neq = A.size(1) if A.nelement() > 0 else 0
+            neq = A.size(1) if A is not None else 0
             assert(neq > 0 or nineq > 0)
             ctx.neq, ctx.nineq, ctx.nz = neq, nineq, nz
 
-            if nineq > 0 and solver == 'PDIPM':
+            if nineq > 0 and solver == 'qpsolvers':
+                dQP_settings = dQP.build_settings(
+                        solve_type="dense",
+                        qp_solver="gurobi",
+                        # lin_solver="scipy LU",
+                    )
+                dQP_layer = dQP.dQP_layer(settings=dQP_settings)
+                if nBatch == 1:
+                    Q = Q.squeeze(0)  # (n,n)
+                    p = p.squeeze(0)  # (n,)
+                    G = G.squeeze(0)  # (m,n)
+                    h = h.squeeze(0)  # (m,)
+                    A = A.squeeze(0) if A is not None else None
+                    b = b.squeeze(0) if b is not None else None
+                zhats, nus, lams, solve_time, total_forward_time = dQP_layer(
+                    Q, p, G, h, A, b
+                )
+                if isinstance(nus, list):
+                    nus = torch.vstack(nus)
+                zhats = zhats.to(dtype=Q.dtype)
+                lams = lams.to(dtype=Q.dtype)
+                nus = nus.to(dtype=Q.dtype)
+                
+                if nBatch == 1:
+                    G = G.unsqueeze(0)  # (1,m,n)
+                    h = h.unsqueeze(0)  # (1,m)
+                Gz = torch.bmm(G, zhats.unsqueeze(-1)).squeeze(-1)
+                slacks = torch.clamp(h - Gz, min=0.0)
+
+                slacks = slacks.to(device=zhats.device, dtype=Q.dtype)            
+            elif nineq > 0 and solver == 'PDIPM':
                 if cvxpy_instance is None:
                     ctx.Q_LU, ctx.S_LU, ctx.R = pdipm_b.pre_factor_kkt(Q, G, A)
                     zhats, nus, lams, slacks = pdipm_b.forward(
@@ -449,7 +483,7 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
 
             if exact_bwd_sol:
                 # kkt_schur_fast_fn = torch.compile(kkt_schur_fast, mode="max-autotune")
-
+                delta_directions = delta_directions.to(Q.dtype)
                 _dzhat, _dnu = kkt_schur_fast(Q, G_active, delta_directions)
                 dzhat.copy_(_dzhat.unsqueeze(-1))
                 dnu.copy_(_dnu)

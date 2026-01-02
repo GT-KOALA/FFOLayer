@@ -3,7 +3,9 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+import warnings
 
+warnings.filterwarnings("ignore")
 
 sns.set_theme(style="whitegrid", context="talk")
 palette = sns.color_palette()
@@ -15,6 +17,8 @@ METHODS = [
     "cvxpylayer",
     "qpth",
     "lpgd",
+    "bpqp",
+    "dqp",
     "ffoqp_eq",
     "ffocp_eq",
 ]
@@ -22,6 +26,8 @@ METHODS_LEGEND = {
     "cvxpylayer": "CvxpyLayer",
     "qpth": "qpth",
     "lpgd": "LPGD",
+    "bpqp": "BPQP",
+    "dqp": "dQP",
     "ffoqp_eq": "FFOQP",
     "ffocp_eq": "FFOCP",
 }
@@ -30,7 +36,7 @@ METHODS_STEPS = [method+"_steps" for method in METHODS]
 
 method_order = [METHODS_LEGEND[m] for m in METHODS]
 
-markers = ["o", "s", "D", "^", "v"]
+markers = ["o", "s", "D", "^", "v", "x", "P", "s", "D"]
 markers_dict = {method: markers[i] for i, method in enumerate(method_order)}
 
 LINEWIDTH = 1.5
@@ -76,7 +82,7 @@ def plot_time_vs_method(df, time_names=['forward_time', 'backward_time'], plot_p
     sns.barplot(data=df_long, x='method', y='Time', hue='Metrics')
     plt.ylabel("Time")
     plt.title("Forward and Backward Time")
-    plt.savefig(f"{plot_path}/{plot_name_tag}_time_vs_method.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{plot_path}/{plot_name_tag}_time_vs_method.pdf", dpi=300, bbox_inches='tight')
     plt.close()
 
 def plot_time_vs_epoch(df, time_names=['forward_time', 'backward_time'], iteration_name='epoch', plot_path=BASE_DIR, plot_name_tag=""):
@@ -88,7 +94,7 @@ def plot_time_vs_epoch(df, time_names=['forward_time', 'backward_time'], iterati
     plt.ylabel("Forward Time")
     plt.title(f"Forward Time vs {iteration_name}")
     
-    plt.savefig(f"{plot_path}/{plot_name_tag}_forward_time_vs_{iteration_name}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{plot_path}/{plot_name_tag}_forward_time_vs_{iteration_name}.pdf", dpi=300, bbox_inches='tight')
     plt.close()
 
     # --- Backward Time Figure ---
@@ -97,7 +103,7 @@ def plot_time_vs_epoch(df, time_names=['forward_time', 'backward_time'], iterati
     plt.ylabel("Backward Time")
     plt.title(f"Backward Time vs {iteration_name}")
     
-    plt.savefig(f"{plot_path}/{plot_name_tag}_backward_time_vs_{iteration_name}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{plot_path}/{plot_name_tag}_backward_time_vs_{iteration_name}.pdf", dpi=300, bbox_inches='tight')
     plt.close()
 
 def plot_total_time_vs_method(df, time_names=['forward_time', 'backward_time'], plot_path=BASE_DIR, plot_name_tag=""):
@@ -116,7 +122,6 @@ def plot_total_time_vs_method(df, time_names=['forward_time', 'backward_time'], 
     plt.title("Total Time vs Method")
     plt.legend()
     plt.savefig(f"{plot_path}/{plot_name_tag}_total_time_vs_method.pdf", dpi=300, bbox_inches='tight')
-    plt.savefig(f"{plot_path}/{plot_name_tag}_total_time_vs_method.png", dpi=300, bbox_inches='tight')
     plt.close()
 
 def plot_losse_vs_epoch(df, loss_metric_name, iteration_name='epoch', plot_path=BASE_DIR, plot_name_tag="", loss_range=None, stride=50):
@@ -141,7 +146,6 @@ def plot_losse_vs_epoch(df, loss_metric_name, iteration_name='epoch', plot_path=
         ax.set_ylim(loss_range)
     
     plt.savefig(f"{plot_path}/{plot_name_tag}_{loss_metric_name}_vs_{iteration_name}.pdf", dpi=300, bbox_inches='tight')
-    plt.savefig(f"{plot_path}/{plot_name_tag}_{loss_metric_name}_vs_{iteration_name}.png", dpi=300, bbox_inches='tight')
     plt.close()
         
 

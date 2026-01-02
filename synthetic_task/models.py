@@ -47,10 +47,13 @@ class MLP(nn.Module):
 
     def forward(self, x):
         x = x.view(-1, self.input_dim)
-        # x = self.activation(self.fc1(x)) ###SHING HEI: removed batch norm for batch size 1
-        x = self.activation(self.batch_norm1(self.fc1(x)))
-        # x = self.activation(self.fc2(x))
-        x = self.activation(self.batch_norm2(self.fc2(x)))
+        batch_size = x.shape[0]
+        if batch_size > 1:
+            x = self.activation(self.batch_norm1(self.fc1(x)))
+            x = self.activation(self.batch_norm2(self.fc2(x)))
+        else:
+            x = self.activation(self.fc1(x))
+            x = self.activation(self.fc2(x))
         x = torch.clamp(self.fc3(x), min=-self.bound, max=self.bound)
         return x
     
@@ -235,7 +238,7 @@ class OptModel(nn.Module):
                         "eq_functions":eq_funcs, "ineq_functions":ineq_funcs}
             
                     # self.optlayer = ffoqp_eq_cst_schur.ffoqp(alpha=alpha, chunk_size=1, cvxpy_instance=cvxpy_instance)
-                    self.optlayer = ffoqp_eq_cst_schur.ffoqp(alpha=alpha, chunk_size=1, cvxpy_instance=cvxpy_instance, solver='OSQP_NATIVE')
+                    self.optlayer = ffoqp_eq_cst_schur.ffoqp(alpha=alpha, chunk_size=1, cvxpy_instance=cvxpy_instance, solver='qpsolvers')
                     
                 elif layer_type == FFOQP_EQ_PARALLELIZE:
                     self.optlayer = ffoqp_eq_cst_parallelize.ffoqp(alpha=alpha, chunk_size=1)
@@ -315,7 +318,7 @@ class OptModel(nn.Module):
             h = self.h
         
         if self.is_QP:
-            if self.layer_type in [QPTH, FFOQP_EQ, FFOQP_EQ_SCHUR, FFOQP_EQ_PARALLELIZE, FFOQP_EQ_PDIPM]:
+            if self.layer_type in [QPTH, FFOQP_EQ, FFOQP_EQ_PARALLELIZE, FFOQP_EQ_PDIPM, FFOQP_EQ_SCHUR]:
                 sol = self.optlayer(
                     self.Q, q_pred, self.G, h, self.A, self.b
                 )
