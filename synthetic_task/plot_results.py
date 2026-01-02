@@ -345,6 +345,6 @@ if __name__=="__main__":
     # plot_total_time_vs_method(df, time_names=['forward_setup_time', 'backward_setup_time'], plot_path=BASE_DIR, plot_name_tag="syn_steps_setup")
     
     # plot_loss_vs_epoch(df, "train_df_loss", iteration_name='iter', plot_path=BASE_DIR, plot_name_tag="syn_steps")
-    plot_loss_vs_epoch_method_tol(df, loss_metric='train_df_loss', iteration='epoch',
+    plot_loss_vs_epoch_method_tol(df, loss_metric='train_df_loss', iteration='iter',
                                   plot_path=BASE_DIR, plot_name_tag="syn_steps")
     
