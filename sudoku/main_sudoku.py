@@ -153,7 +153,6 @@ def train_test_loop(args, experiment_dir, step_experiment_dir, n):
                 backward_time += time.time() - backward_start_time
                 iter_backward_time = time.time() - backward_start_time
 
-                
                 with torch.no_grad():
                     train_err += computeErr(pred)
                 
@@ -228,17 +227,25 @@ def train_test_loop(args, experiment_dir, step_experiment_dir, n):
                     torch.save(checkpoint, os.path.join(directory, f"checkpoint_epoch{epoch}.pt"))
             print('Forward time {}, backward time {}'.format(forward_time, backward_time))
 
-            model.eval()
-            with torch.no_grad():
+            if method !="dqp":
+                model.eval()
+                with torch.no_grad():
+                    for i, (x, y) in enumerate(test_loader):
+                        x = x.to(device)
+                        y = y.to(device)
+                        
+                        pred = model(x)
+                        loss = loss_fn(pred, y)
+                        
+                        test_err += computeErr(pred)
+
+                        test_loss_list.append(loss.item())
+            else:
                 for i, (x, y) in enumerate(test_loader):
-                    x = x.to(device)
-                    y = y.to(device)
-                    
+                    x = x.to(device); y = y.to(device)
                     pred = model(x)
                     loss = loss_fn(pred, y)
-                    
                     test_err += computeErr(pred)
-
                     test_loss_list.append(loss.item())
 
             train_loss = np.mean(train_loss_list)

@@ -269,7 +269,11 @@ class SingleOptLayerSudoku(nn.Module):
                 sol, = self.optlayer(*params_batched, solver_args={"eps": 1e-12}) #, solver_args={"eps": 1e-8, "max_iters": 10000, "acceleration_lookback": 0}
                 # sol, = self.optlayer(*params_batched)
             elif self.layer_type==DQP:
+                if Q_batched.device.type == 'cuda':
+                    params_batched = [Q_batched.cpu(), p.cpu(), G_batched.cpu(), h_batched.cpu(), A_batched.cpu(), b_batched.cpu()]
                 sol, _, _, _, _ = self.optlayer(*params_batched)
+                if Q_batched.device.type == 'cuda':
+                    sol = sol.to(Q_batched.device)
             elif self.layer_type==CVXPY_LAYER:
                 solver_args={"mode": "lsqr", "max_iters": 100, "eps": 1e-6,}
                 sol, = self.optlayer(*params_batched, solver_args=solver_args)
