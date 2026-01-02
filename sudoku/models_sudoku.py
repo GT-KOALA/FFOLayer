@@ -171,7 +171,7 @@ class SingleOptLayerSudoku(nn.Module):
         
         
         ######## set up optimization layer
-        if self.layer_type not in [QPTH, LPGD_QP, BPQP, DQP]:
+        if self.layer_type not in [QPTH, LPGD_QP, BPQP, DQP, ALTDIFF]:
             problem, objective, ineq_functions, eq_functions, params, variables = setup_cvx_qp_problem(opt_var_dim=self.y_dim, num_ineq=self.num_ineq, num_eq=self.num_eq)
             
             multithread = True
@@ -272,7 +272,7 @@ class SingleOptLayerSudoku(nn.Module):
                 sol, = self.optlayer(*params_batched, solver_args={"eps": 1e-12}) #, solver_args={"eps": 1e-8, "max_iters": 10000, "acceleration_lookback": 0}
                 # sol, = self.optlayer(*params_batched)
             elif self.layer_type==ALTDIFF:
-                sol, = self.optlayer(*params_batched)
+                sol = self.optlayer(*params_batched)
             elif self.layer_type==DQP:
                 if Q_batched.device.type == 'cuda':
                     params_batched = [Q_batched.cpu(), p.cpu(), G_batched.cpu(), h_batched.cpu(), A_batched.cpu(), b_batched.cpu()]

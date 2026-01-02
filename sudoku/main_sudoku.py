@@ -12,7 +12,6 @@ from torch.utils.data import DataLoader, TensorDataset, Subset
 from models_sudoku import BLOSudokuLearnA, OptNetSudokuLearnA, SingleOptLayerSudoku
 from utils_sudoku import computeErr, create_logger, decode_onehot
 import logger as logger
-import wandb
 
 def train_test_loop(args, experiment_dir, step_experiment_dir, n):
     method = args.method
@@ -210,12 +209,6 @@ def train_test_loop(args, experiment_dir, step_experiment_dir, n):
                 with open(step_experiment_dir + filename, 'a') as step_file:
                     step_file.write(f'{i},{loss.item()},{iter_forward_time},{iter_backward_time},{train_err},{forward_time},{backward_time}\n')
                     step_file.flush()
-                
-                
-                wandb.log({
-                    "train_loss": loss.item(), "iter_time": iter_forward_time + iter_backward_time, "accumulated_backward_time": backward_time, "accumulated_forward_time": forward_time,
-                    "iter_forward_time": iter_forward_time, "iter_backward_time": iter_backward_time,
-                })
 
             if epoch==num_epochs-1:
                     checkpoint = {
@@ -253,15 +246,6 @@ def train_test_loop(args, experiment_dir, step_experiment_dir, n):
             
             train_err = train_err/len(train_dataset)
             test_err = test_err/len(test_dataset)
-
-            wandb.log({
-                "avg_train_loss": train_loss,
-                "avg_test_loss": test_loss,
-                "train_error": train_err,
-                "test_error": test_err,
-                "total_forward_time": forward_time,
-                "total_backward_time": backward_time,
-            })
             
             avg_train_err.append(train_err)
             avg_test_err.append(test_err)
@@ -279,12 +263,6 @@ def train_test_loop(args, experiment_dir, step_experiment_dir, n):
             file.flush()
 
         writer.flush()
-
-    
-    
-
-
-
 
  
 if __name__ == '__main__':
@@ -315,12 +293,6 @@ if __name__ == '__main__':
     
     n = args.n
     failure_id = '{}_n{}_lr{}_seed{}'.format(args.method, n, args.lr, args.seed)
-
-    wandb.login(key="9459f0100021f1abd3867bedcda1b47716e21a34")
-    time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime())
-    if not os.path.exists(f"wandb/{args.method}"):
-        os.makedirs(f"wandb/{args.method}")
-    wandb.init(project=f"bilevel_layer_sudoku", name=f"sudoku_{time_str}", config=vars(args), dir=f"wandb/{args.method}")
     
     try:
         train_test_loop(args, experiment_dir, step_experiment_dir, n=n)
