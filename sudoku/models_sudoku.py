@@ -11,6 +11,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import cvxpy as cp
 from BPQP import BPQPLayer
 from dqp import dQP
+from AltDiff import AltDiffLayer
 
 from ffocp_eq import BLOLayer
 # from ffocp_eq_multithread_wo_list import BLOLayer as BLOLayerMT
@@ -26,7 +27,7 @@ from ffoqp_lpgd import ffoqp as lpgd_ffoqp
 
 
 from utils_sudoku import setup_cvx_qp_problem, get_sudoku_matrix
-from constants import FFOCP_EQ, QPTH, LPGD, CVXPY_LAYER, FFOQP_EQ, LPGD_QP, BPQP, DQP, FFOQP_EQ_SCHUR
+from constants import FFOCP_EQ, QPTH, LPGD, CVXPY_LAYER, FFOQP_EQ, LPGD_QP, BPQP, DQP, FFOQP_EQ_SCHUR, ALTDIFF
 
 
 def get_default_sudoku_params(n, Qpenalty=0.1, get_equality=True):
@@ -112,7 +113,7 @@ class SingleOptLayerSudoku(nn.Module):
         '''
         super().__init__()
         self.layer_type = layer_type
-        assert(layer_type in [QPTH, FFOCP_EQ, FFOQP_EQ_SCHUR, LPGD, CVXPY_LAYER, FFOQP_EQ, LPGD_QP, BPQP, DQP])
+        assert(layer_type in [QPTH, FFOCP_EQ, FFOQP_EQ_SCHUR, LPGD, CVXPY_LAYER, FFOQP_EQ, LPGD_QP, BPQP, DQP, ALTDIFF])
        
         param_vals = get_default_sudoku_params(n, Qpenalty=Qpenalty, get_equality=True)
         
@@ -131,7 +132,7 @@ class SingleOptLayerSudoku(nn.Module):
         assert(len(learnable_parts)!=0)
         assert(len(learnable_parts)==1)
         
-        if self.layer_type in [QPTH, FFOQP_EQ, FFOQP_EQ_SCHUR, LPGD_QP, BPQP, DQP]:
+        if self.layer_type in [QPTH, FFOQP_EQ, FFOQP_EQ_SCHUR, LPGD_QP, BPQP, DQP, ALTDIFF]:
             self.register_buffer("Q", param_vals["Q"])
         else:
             self.register_buffer("Q", param_vals["Q"]**0.5) ## due to the setup cvxpy problem method
@@ -204,6 +205,8 @@ class SingleOptLayerSudoku(nn.Module):
         else:
             if self.layer_type==QPTH:
                 self.optlayer = QPFunction(verbose=-1)
+            elif self.layer_type==ALTDIFF:
+                self.optlayer = AltDiffLayer()
             elif self.layer_type==LPGD_QP:
                 self.optlayer = lpgd_ffoqp(alpha=alpha)
             elif self.layer_type==BPQP:
@@ -268,6 +271,8 @@ class SingleOptLayerSudoku(nn.Module):
                 # ZIHAO CHANGE: set eps to 1e-12
                 sol, = self.optlayer(*params_batched, solver_args={"eps": 1e-12}) #, solver_args={"eps": 1e-8, "max_iters": 10000, "acceleration_lookback": 0}
                 # sol, = self.optlayer(*params_batched)
+            elif self.layer_type==ALTDIFF:
+                sol, = self.optlayer(*params_batched)
             elif self.layer_type==DQP:
                 if Q_batched.device.type == 'cuda':
                     params_batched = [Q_batched.cpu(), p.cpu(), G_batched.cpu(), h_batched.cpu(), A_batched.cpu(), b_batched.cpu()]
