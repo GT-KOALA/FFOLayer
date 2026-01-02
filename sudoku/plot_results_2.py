@@ -3,7 +3,9 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+import warnings
 
+warnings.filterwarnings("ignore")
 
 sns.set_theme(style="whitegrid", context="talk")
 palette = sns.color_palette()
@@ -15,6 +17,8 @@ METHODS = [
     "cvxpylayer",
     "qpth",
     "lpgd",
+    "bpqp",
+    "dqp",
     "ffoqp_eq",
     "ffocp_eq",
 ]
@@ -22,6 +26,8 @@ METHODS_LEGEND = {
     "cvxpylayer": "CvxpyLayer",
     "qpth": "qpth",
     "lpgd": "LPGD",
+    "bpqp": "BPQP",
+    "dqp": "dQP",
     "ffoqp_eq": "FFOQP",
     "ffocp_eq": "FFOCP",
 }
@@ -30,7 +36,7 @@ METHODS_STEPS = [method+"_steps" for method in METHODS]
 
 method_order = [METHODS_LEGEND[m] for m in METHODS]
 
-markers = ["o", "s", "D", "^", "v"]
+markers = ["o", "s", "D", "^", "v", "x", "P", "s", "D"]
 markers_dict = {method: markers[i] for i, method in enumerate(method_order)}
 
 LINEWIDTH = 1.5

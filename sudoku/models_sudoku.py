@@ -195,7 +195,7 @@ class SingleOptLayerSudoku(nn.Module):
                     self.optlayer = BLOLayerMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol)
                     # self.optlayer = BLOLayerMT(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol)    
             elif layer_type==FFOQP_EQ or layer_type==FFOQP_EQ_SCHUR:
-                self.optlayer = ffoqpLayer(alpha=alpha)
+                self.optlayer = ffoqpLayer(alpha=alpha, chunk_size=1, solver='qpsolvers')
             elif layer_type==CVXPY_LAYER:
                 self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
             elif layer_type==LPGD:
