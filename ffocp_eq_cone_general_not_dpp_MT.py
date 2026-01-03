@@ -40,14 +40,14 @@ def _has_pnorm_atom(expr) -> bool:
         nm_fn = getattr(expr, "name", None)
         if callable(nm_fn):
             nm = nm_fn()
-            if nm in {"pnorm", "norm1", "norm_inf", "norm2"}:
+            if nm in {"pnorm", "norm1", "norm_inf"}:
                 return True
     except Exception:
         pass
 
     try:
         cls = expr.__class__.__name__.lower()
-        if cls in {"pnorm", "norm1", "norminf", "norm_inf", "norm2"}:
+        if cls in {"pnorm", "norm1", "norminf", "norm_inf"}:
             return True
     except Exception:
         pass
@@ -276,6 +276,7 @@ def BLOLayerMT(
     eps: float = 1e-13,
     compute_cos_sim: bool = False,
     max_workers: int | None = None,
+    backward_eps: float = 1e-3,
 ):
     return _BLOLayerMT(
         problem_list=problem_list,
@@ -287,6 +288,7 @@ def BLOLayerMT(
         eps=eps,
         compute_cos_sim=compute_cos_sim,
         max_workers=max_workers,
+        backward_eps=backward_eps,
     )
 
 
@@ -302,6 +304,7 @@ class _BLOLayerMT(torch.nn.Module):
         eps,
         compute_cos_sim,
         max_workers: int | None,
+        backward_eps,
     ):
         super().__init__()
         if not (len(problem_list) == len(parameters_list) == len(variables_list)):
@@ -329,6 +332,7 @@ class _BLOLayerMT(torch.nn.Module):
         self.dual_cutoff = float(dual_cutoff)
         self.slack_tol = float(slack_tol)
         self.eps = float(eps)
+        self.backward_eps = float(backward_eps)
         self._compute_cos_sim = bool(compute_cos_sim)
 
         self.forward_solve_time = 0
@@ -627,7 +631,7 @@ class _BLOLayerMTFn(torch.autograd.Function):
             # solve perturbed
             bargs = dict(ctx.solver_args)
             bargs["warm_start"] = bargs.get("warm_start", False)
-            bargs["eps"] = 1e-3
+            bargs["eps"] = mt.backward_eps
             layer.perturbed_problem.solve(**bargs)
             if layer.perturbed_problem.status not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
                 layer.perturbed_problem.solve(solver=cp.OSQP, eps_abs=1e-4, eps_rel=1e-4, warm_start=True, verbose=False)
