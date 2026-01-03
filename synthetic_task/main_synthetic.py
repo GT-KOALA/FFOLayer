@@ -205,7 +205,7 @@ if __name__ == '__main__':
 
                 
                 
-                print(f"train loss: {loss.item()}, iter time: {iter_time}")
+                print(f"train loss: {loss.item()}, forward solve time: {forward_solve_time_}, backward solve time: {backward_solve_time_}, forward setup time: {forward_setup_time_}, backward setup time: {backward_setup_time_}, backward time: {backward_time_}, iter time: {iter_time}")
                 
                 # if method=="ffocp_eq":
                 #     print(f"forward_opt_time: {forward_optimization_time_}, backward_opt_time: {backward_optimization_time_}")

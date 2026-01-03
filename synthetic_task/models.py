@@ -362,6 +362,8 @@ class OptModel(nn.Module):
                 
                 if self.layer_type==LPGD:
                     sol, = self.optlayer(*params_batched, solver_args={"eps": 1e-3}) #, solver_args={"eps": 1e-8, "max_iters": 10000, "acceleration_lookback": 0}
+                elif self.layer_type==CVXPY_LAYER:
+                    sol, = self.optlayer(*params_batched)
                 else:
                     sol, = self.optlayer(*params_batched)
         else:
