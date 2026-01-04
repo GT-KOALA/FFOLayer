@@ -195,7 +195,6 @@ class OptModel(nn.Module):
                     if not multithread:
                         self.optlayer = BLOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, solver_name="SCS")
                     else:
-                        print("HELLO")
                         problem_list = []
                         params_list = []
                         variables_list = []
