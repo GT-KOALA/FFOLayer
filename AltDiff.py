@@ -170,9 +170,9 @@ def _adjoint_and_param_grads_single(
 
 
 def AltDiffLayer(
-    eps=1e-10,
-    max_iter=5000,
-    rho=5.0,
+    eps=1e-8,
+    max_iter=2500,
+    rho=1.0,
     reg_fwd=1e-7,
     active_tol=1e-6,
     reg_bwd=1e-9,

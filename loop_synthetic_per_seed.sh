@@ -1,7 +1,8 @@
 #!/bin/bash
 
 
-seeds=($(seq 1 2))   # ← ARRAY, not string
+# seeds=($(seq 1 1 5))
+seeds=(1)
 
 # ydims=($(seq 100 100 1000))
 ydims=(900)

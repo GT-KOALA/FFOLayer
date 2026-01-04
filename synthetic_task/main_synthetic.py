@@ -24,7 +24,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate') #0.00001
     parser.add_argument('--batch_size', type=int, default=32, help='batch size')
     parser.add_argument('--ydim', type=int, default=1000, help='dimension of y')
-    parser.add_argument('--backward_eps', type=float, default=1e-1, help='backward tolerance') #0.00001
+    parser.add_argument('--backward_eps', type=float, default=1e-3, help='backward tolerance') #0.00001
     
     parser.add_argument('--alpha', type=float, default=100, help='alpha')
     parser.add_argument('--dual_cutoff', type=float, default=1e-3, help='dual cutoff')

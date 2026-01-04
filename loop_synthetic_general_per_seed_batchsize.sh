@@ -1,7 +1,7 @@
 #!/bin/bash
 
 
-seeds=(1)   # ← ARRAY, not string
+seeds=($(seq 1 1 5))   # ← ARRAY, not string
 
 ydims=(200)
 batchSizes=(1 2 4 8 16 32)
