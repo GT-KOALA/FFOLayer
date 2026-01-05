@@ -10,8 +10,8 @@ import sys
 import os
 import argparse
 
-from models import *
-from data import *
+from models import OptModel
+from data import genData
 
 from torch.utils.tensorboard import SummaryWriter
 
