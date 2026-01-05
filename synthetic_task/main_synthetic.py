@@ -75,7 +75,10 @@ if __name__ == '__main__':
     gradients = [torch.zeros_like(parameter) for parameter in model.parameters()]
 
     directory = '../synthetic_results_{}{}/{}/'.format(args.batch_size, args.suffix, method)
-    filename = '{}_ydim{}_lr{}_seed{}_backwardTol{}.csv'.format(method, ydim, learning_rate, seed, backward_eps)
+    if method == "ffocp_eq":
+        filename = '{}_ydim{}_lr{}_seed{}_backwardTol{}.csv'.format(method, ydim, learning_rate, seed, backward_eps)
+    else:
+        filename = '{}_ydim{}_lr{}_seed{}.csv'.format(method, ydim, learning_rate, seed)
     # if os.path.exists(directory + filename):
     #     os.remove(directory + filename)
 

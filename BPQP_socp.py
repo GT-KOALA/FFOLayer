@@ -35,7 +35,7 @@ def _soc_dual_scalar_u(dv):
     return float(arr[0])
 
 
-def cvxpy_solve_qp_lin_soc(P, q, G, h, A, b, soc_a, soc_b, sign=1, eps=1e-5, max_iters=200000):
+def cvxpy_solve_qp_lin_soc(P, q, G, h, A, b, soc_a, soc_b, sign=1, eps=1e-12, max_iters=2500):
     """
     Solve:
       minimize 0.5 x^T P x + sign*q^T x
@@ -209,7 +209,7 @@ def BPQPLayer(sign=1, act_tol=1e-6):
 
                 x_np, nu_np, lam_np, lam_soc_np = cvxpy_solve_qp_lin_soc(
                     Pi, qi, Gi, hi, Ai, bi, sai, sbi,
-                    sign=sign, eps=1e-5, max_iters=200000
+                    sign=sign, eps=1e-12, max_iters=2500
                 )
 
                 xs.append(torch.from_numpy(x_np).to(device=Pi.device, dtype=Pi.dtype))

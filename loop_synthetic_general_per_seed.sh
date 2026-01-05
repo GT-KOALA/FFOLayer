@@ -1,11 +1,11 @@
 #!/bin/bash
 
 
-# seeds=($(seq 1 5))
-seeds=(1)
+seeds=($(seq 1 5))
+# seeds=(1)
 
 ydims=($(seq 200 100 1000))
-# ydims=(200)
+# ydims=($(seq 100 100 400))
 
 batchSize=8
 

@@ -44,8 +44,37 @@ markers_dict = {method: markers[i] for i, method in enumerate(method_order)}
 
 LINEWIDTH = 1.5
 
+def load_results_CP(base_dir=BASE_DIR, methods=METHODS, methods_legend=None):
+    if methods_legend is None:
+        methods_legend = METHODS_LEGEND
+    dfs = []
+    for m in methods:
+        pattern = os.path.join(base_dir, m, "*.csv")
+        for fp in sorted(glob.glob(pattern)):
+            m = m.removesuffix("_steps")
+            
+            df = pd.read_csv(fp)
+            df["method"] = methods_legend[m]
 
-def load_results(base_dir=BASE_DIR, methods=METHODS, methods_legend=None):
+            fname = os.path.basename(fp)
+            def grab(pat, cast=float):
+                mo = re.search(pat, fname)
+                return cast(mo.group(1)) if mo else np.nan
+
+            df["seed"] = grab(r"_seed(\d+)", int)
+            df["n"] = grab(r"n(\d+)", int)
+            df["lr"]   = grab(r"lr([0-9eE\.\-]+)", float)
+            df["ydim"] = grab(r"ydim(\d+)", int)
+            dfs.append(df)
+        
+        print("method: ", m)
+        # print(df)
+        
+    if not dfs:
+        raise FileNotFoundError(f"No CSVs found under {base_dir}.")
+    return pd.concat(dfs, ignore_index=True, sort=False)
+
+def load_results_QP(base_dir=BASE_DIR, methods=METHODS, methods_legend=None):
     if methods_legend is None:
         methods_legend = METHODS_LEGEND
     dfs = []
@@ -140,7 +169,10 @@ def plot_total_time_vs_method(
     plot_path=BASE_DIR,
     plot_name_tag="",
 ):
-    df_avg_method = df.groupby("method")[time_names].mean().reindex(method_order)
+    available_methods = set(df["method"].unique())
+    filtered_method_order = [m for m in method_order if m in available_methods]
+
+    df_avg_method = df.groupby("method")[time_names].mean().reindex(filtered_method_order)
 
     methods = df_avg_method.index.tolist()
     forward = df_avg_method[time_names[0]].to_numpy()
@@ -403,12 +435,113 @@ def plot_loss_vs_epoch_method_tol(df, loss_metric='train_df_loss', iteration='ep
     plt.savefig(f"{plot_path}/{plot_name_tag}_{loss_metric}_vs_{iteration}.pdf", dpi=300, bbox_inches='tight')
     plt.close()
 
+def plot_time_scaling_vs_ydim(
+    df,
+    time_names=("forward_time", "backward_time"),
+    plot_path=BASE_DIR,
+    plot_name_tag="syn",
+    methods_order=None,
+    markers_dict=markers_dict,
+    dashed_methods=("CvxpyLayer", "LPGD", "BPQP", "FFOCP"),  # CP
+    agg="mean",
+    logy=False,
+    y_min=None,
+    y_max=None,
+    filter_backwardTol=None,
+):
+    os.makedirs(plot_path, exist_ok=True)
 
-        
+    d = df.copy().dropna(subset=["ydim", "method"])
+    d["ydim"] = d["ydim"].astype(int)
+
+    if "backwardTol" in d.columns and filter_backwardTol is not None:
+        d = d[np.isclose(d["backwardTol"].astype(float), float(filter_backwardTol))]
+
+    gfunc = "median" if agg == "median" else "mean"
+    g = getattr(d.groupby(["method", "ydim"], as_index=False)[list(time_names)], gfunc)()
+    g["total_time"] = g[time_names[0]] + g[time_names[1]]
+
+    if methods_order is None:
+        methods_order = (
+            [m for m in d["method"].cat.categories if m in g["method"].unique()]
+            if isinstance(d["method"].dtype, pd.CategoricalDtype)
+            else sorted(g["method"].unique())
+        )
+    else:
+        methods_order = [m for m in methods_order if m in g["method"].unique()]
+
+    plt.rcParams.update({
+        "font.size": 13, "axes.titlesize": 14, "axes.labelsize": 13,
+        "legend.fontsize": 11, "xtick.labelsize": 12, "ytick.labelsize": 12,
+    })
+
+    fig, axes = plt.subplots(1, 3, figsize=(15.5, 4.2), sharex=True)
+    panels = [
+        ("total_time", "Total time"),
+        (time_names[0], "Forward time"),
+        (time_names[1], "Backward time"),
+    ]
+
+    dashed_methods = set(dashed_methods)
+
+    for ax, (col, title) in zip(axes, panels):
+        for i, method in enumerate(methods_order):
+            gg = g[g["method"] == method].sort_values("ydim")
+            if gg.empty:
+                continue
+
+            is_dashed = method in dashed_methods
+            ax.plot(
+                gg["ydim"], gg[col],
+                label=method,
+                marker=markers_dict.get(method, markers[i % len(markers)]),
+                markersize=5.5,
+                linewidth=2.2 if is_dashed else 2.0,
+                linestyle=(0, (4, 2)) if is_dashed else "solid",
+            )
+
+        ax.set_title(title)
+        ax.set_xlabel("y dim")
+        ax.grid(True, which="major", alpha=0.25)
+        ax.grid(True, which="minor", alpha=0.12)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        if logy:
+            ax.set_yscale("log")
+        if y_min is not None or y_max is not None:
+            ax.set_ylim(bottom=y_min, top=y_max)
+
+        ax.yaxis.set_major_formatter(mticker.ScalarFormatter(useOffset=False))
+        ax.yaxis.get_offset_text().set_visible(False)
+
+    axes[0].set_ylabel("time (s)")
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    ncol = min(len(labels), 4) 
+    fig.legend(
+        handles, labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.02),
+        fontsize=14,
+        ncol=ncol,
+        frameon=False,
+        handlelength=2.4,
+        handletextpad=0.6,
+        columnspacing=1.2,
+    )
+
+    # leave space at bottom for legend
+    fig.tight_layout(rect=[0, 0.12, 1, 1])
+
+    out = os.path.join(plot_path, f"{plot_name_tag}_time_scaling_vs_ydim.pdf")
+    fig.savefig(out, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
 
 if __name__=="__main__":
     
-    df = load_results()
+    df = load_results_CP()
     df = df.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
     df["method"] = pd.Categorical(df["method"], categories=method_order, ordered=True)
 
@@ -419,7 +552,7 @@ if __name__=="__main__":
                                              plot_path=BASE_DIR, plot_name_tag="syn")
    
    #########################################
-    df = load_results(methods=METHODS_STEPS)
+    df = load_results_CP(methods=METHODS_STEPS)
     df = df.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
     df["method"] = pd.Categorical(df["method"], categories=method_order, ordered=True)
 

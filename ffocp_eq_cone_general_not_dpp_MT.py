@@ -461,8 +461,8 @@ class _BLOLayer(torch.nn.Module):
         self._solver_args_fwd = dict(solver_args)
 
         self._solver_args_bwd = dict(solver_args)
-        self._solver_args_bwd["warm_start"] = True
-        self._solver_args_bwd["max_iters"] = 100
+        self._solver_args_bwd["warm_start"] = False
+        self._solver_args_bwd["max_iters"] = 2500
         if "eps" in self._solver_args_bwd:
             self._solver_args_bwd["eps"] = float(self.backward_eps)
 
