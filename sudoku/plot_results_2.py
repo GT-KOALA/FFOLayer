@@ -25,7 +25,6 @@ METHODS = [
     "dqp",
     "qpth",
     "ffoqp_eq",
-    
 ]
 METHODS_LEGEND = {
     "cvxpylayer": "CvxpyLayer",

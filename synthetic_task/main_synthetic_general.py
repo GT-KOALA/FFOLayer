@@ -27,6 +27,7 @@ if __name__ == '__main__':
     parser.add_argument('--alpha', type=float, default=100, help='alpha')
     parser.add_argument('--dual_cutoff', type=float, default=1e-3, help='dual cutoff')
     parser.add_argument('--slack_tol', type=float, default=1e-8, help='slack tolerance')
+    parser.add_argument('--backward_eps', type=float, default=1e-8, help='backward epsilon')
 
     parser.add_argument('--device', type=str, default='cuda:0', help='device')
     parser.add_argument('--learn_constraint', type=int, default=1, help='whether to learn constraint')
@@ -42,6 +43,7 @@ if __name__ == '__main__':
     alpha = args.alpha
     dual_cutoff = args.dual_cutoff
     slack_tol = args.slack_tol
+    backward_eps = args.backward_eps
 
     # Set random seed for reproducibility
     device = torch.device(args.device) if torch.cuda.is_available() else torch.device('cpu')
@@ -60,7 +62,7 @@ if __name__ == '__main__':
     # print(len(train_loader))
     # assert(len(train_loader)*batch_size == 1600)
 
-    model = OptModel(input_dim, ydim, layer_type=method, constraint_learnable=(args.learn_constraint==1), batch_size=batch_size, device=device, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, is_QP=False).to(device)
+    model = OptModel(input_dim, ydim, layer_type=method, constraint_learnable=(args.learn_constraint==1), batch_size=batch_size, device=device, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, backward_eps=backward_eps, is_QP=False).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0)
     loss_fn = torch.nn.MSELoss()
     

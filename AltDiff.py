@@ -170,12 +170,12 @@ def _adjoint_and_param_grads_single(
 
 
 def AltDiffLayer(
-    eps=1e-8,
+    eps=1e-5,
     max_iter=2500,
     rho=1.0,
-    reg_fwd=1e-7,
+    reg_fwd=1e-5,
     active_tol=1e-6,
-    reg_bwd=1e-9,
+    reg_bwd=1e-5,
     sym_P=True,
 ):
     class L(Function):
