@@ -74,7 +74,11 @@ if __name__ == '__main__':
     deltas = [torch.zeros_like(parameter) for parameter in model.parameters()]
     gradients = [torch.zeros_like(parameter) for parameter in model.parameters()]
 
-    directory = '../synthetic_results_{}{}/{}/'.format(args.batch_size, args.suffix, method)
+    if method == "qpth" and device != "cpu":
+        directory = '../synthetic_results_{}{}/{}_gpu/'.format(args.batch_size, args.suffix, method)
+    else:
+        directory = '../synthetic_results_{}{}/{}/'.format(args.batch_size, args.suffix, method)
+
     if method == "ffocp_eq":
         filename = '{}_ydim{}_lr{}_seed{}_backwardTol{}.csv'.format(method, ydim, learning_rate, seed, backward_eps)
     else:

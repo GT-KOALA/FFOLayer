@@ -538,6 +538,192 @@ def plot_time_scaling_vs_ydim(
     fig.savefig(out, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
+def discover_batch_dirs(root_dir="..", prefix="synthetic_results_"):
+    cand = glob.glob(os.path.join(root_dir, f"{prefix}*"))
+    out = []
+    for p in cand:
+        if not os.path.isdir(p):
+            continue
+        name = os.path.basename(p.rstrip("/"))
+        mo = re.match(rf"^{re.escape(prefix)}(\d+)$", name)
+        if mo:
+            out.append((int(mo.group(1)), p))
+    out.sort(key=lambda x: x[0])
+    if not out:
+        raise FileNotFoundError(f"No dirs like {prefix}{{int}} under {root_dir}")
+    return out
+
+
+def load_results_across_batches(
+    root_dir="..",
+    batch_sizes=None,
+    loader_fn=None,
+    methods=None,
+    methods_legend=None,
+    prefix="synthetic_results_",
+):
+    if loader_fn is None:
+        raise ValueError("Please pass loader_fn=load_results_CP or load_results_QP")
+    if methods is None:
+        methods = METHODS
+    if methods_legend is None:
+        methods_legend = METHODS_LEGEND
+
+    if batch_sizes is None:
+        batch_dirs = discover_batch_dirs(root_dir=root_dir, prefix=prefix)
+    else:
+        batch_dirs = [(int(bs), os.path.join(root_dir, f"{prefix}{int(bs)}")) for bs in batch_sizes]
+
+    dfs = []
+    for bs, dpath in batch_dirs:
+        if not os.path.isdir(dpath):
+            print(f"[WARN] missing dir: {dpath}, skip")
+            continue
+
+        df = loader_fn(base_dir=dpath, methods=methods, methods_legend=methods_legend)
+        df = df.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
+        df["batch_size"] = int(bs)
+        dfs.append(df)
+
+    if not dfs:
+        raise FileNotFoundError("No results loaded across batches. Check dirs / patterns.")
+    out = pd.concat(dfs, ignore_index=True, sort=False)
+    return out
+
+
+def plot_time_scaling_vs_batch(
+    df,
+    time_names=("forward_time", "backward_time"),
+    plot_path=".",
+    plot_name_tag="syn",
+    methods_order=None,
+    markers_dict=None,
+    dashed_methods=("CvxpyLayer", "LPGD", "BPQP", "FFOCP"),  # CP
+    agg="mean",
+    logx=True,
+    logy=False,
+    y_min=None,
+    y_max=None,
+    filter_ydim=None,
+    filter_backwardTol=None,
+):
+    os.makedirs(plot_path, exist_ok=True)
+    if markers_dict is None:
+        markers_dict = {}
+
+    d = df.copy()
+
+    if "batch_size" not in d.columns:
+        raise KeyError("df must contain column 'batch_size' (use load_results_across_batches).")
+    if "method" not in d.columns:
+        raise KeyError("df must contain column 'method'.")
+
+    if filter_ydim is not None:
+        if "ydim" not in d.columns:
+            raise KeyError("filter_ydim is set but df has no 'ydim' column.")
+        d = d.dropna(subset=["ydim"])
+        d = d[d["ydim"].astype(int) == int(filter_ydim)]
+
+    if "backwardTol" in d.columns and filter_backwardTol is not None:
+        d = d.dropna(subset=["backwardTol"])
+        d = d[np.isclose(d["backwardTol"].astype(float), float(filter_backwardTol))]
+
+    d = d.dropna(subset=["batch_size", "method"])
+    d["batch_size"] = d["batch_size"].astype(int)
+
+    gfunc = "median" if agg == "median" else "mean"
+    g = getattr(d.groupby(["method", "batch_size"], as_index=False)[list(time_names)], gfunc)()
+    g["total_time"] = g[time_names[0]] + g[time_names[1]]
+
+    if methods_order is None:
+        if isinstance(d["method"].dtype, pd.CategoricalDtype):
+            methods_order = [m for m in d["method"].cat.categories if m in g["method"].unique()]
+        else:
+            methods_order = sorted(g["method"].unique())
+    else:
+        methods_order = [m for m in methods_order if m in g["method"].unique()]
+
+    plt.rcParams.update({
+        "font.size": 13, "axes.titlesize": 14, "axes.labelsize": 13,
+        "legend.fontsize": 11, "xtick.labelsize": 12, "ytick.labelsize": 12,
+    })
+
+    fig, axes = plt.subplots(1, 3, figsize=(15.5, 4.2), sharex=True)
+    panels = [
+        ("total_time", "Total time"),
+        (time_names[0], "Forward time"),
+        (time_names[1], "Backward time"),
+    ]
+    dashed_methods = set(dashed_methods)
+
+    for ax, (col, title) in zip(axes, panels):
+        for i, method in enumerate(methods_order):
+            gg = g[g["method"] == method].sort_values("batch_size")
+            if gg.empty:
+                continue
+
+            is_dashed = method in dashed_methods
+            ax.plot(
+                gg["batch_size"], gg[col],
+                label=method,
+                marker=markers_dict.get(method, markers[i % len(markers)]),
+                markersize=5.5,
+                linewidth=2.2 if is_dashed else 2.0,
+                linestyle=(0, (4, 2)) if is_dashed else "solid",
+            )
+
+        ax.set_title(title)
+        ax.set_xlabel("batch size")
+        ax.grid(True, which="major", alpha=0.25)
+        ax.grid(True, which="minor", alpha=0.12)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        if logx:
+            ax.set_xscale("log", base=2)
+            ax.xaxis.set_major_formatter(mticker.ScalarFormatter())
+            ax.set_xticks(sorted(g["batch_size"].unique()))
+            ax.get_xaxis().set_major_formatter(mticker.ScalarFormatter())
+
+        if logy:
+            ax.set_yscale("log")
+        if y_min is not None or y_max is not None:
+            ax.set_ylim(bottom=y_min, top=y_max)
+
+        ax.yaxis.set_major_formatter(mticker.ScalarFormatter(useOffset=False))
+        ax.yaxis.get_offset_text().set_visible(False)
+
+    axes[0].set_ylabel("time (s)")
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    ncol = min(len(labels), 4)
+    fig.legend(
+        handles, labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.02),
+        fontsize=14,
+        ncol=ncol,
+        frameon=False,
+        handlelength=2.4,
+        handletextpad=0.6,
+        columnspacing=1.2,
+    )
+
+    fig.tight_layout(rect=[0, 0.12, 1, 1])
+
+    suffix = ""
+    if filter_ydim is not None:
+        suffix += f"_ydim{int(filter_ydim)}"
+    if filter_backwardTol is not None:
+        suffix += f"_bwdTol{filter_backwardTol:g}"
+
+    out = os.path.join(plot_path, f"{plot_name_tag}_time_scaling_vs_batch{suffix}.pdf")
+    fig.savefig(out, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+    print(f"[saved] {out}")
+
+
 
 if __name__=="__main__":
     
