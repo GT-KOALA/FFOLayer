@@ -765,7 +765,7 @@ class _BLOLayerFn(torch.autograd.Function):
 
             try:
                 prob.solve(**mt._solver_args_bwd)
-            except Exception:
+            except Exception as e:
                 print(f"[backward] problem {i} perturbed solve failed: {e!r}")
                 try:
                     b["perturbed_problem"].solve(solver=cp.OSQP, eps_abs=1e-4, eps_rel=1e-4, warm_start=True, verbose=False)

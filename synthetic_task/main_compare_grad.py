@@ -9,6 +9,7 @@ import time
 import sys
 import os
 import argparse
+import copy
 
 from models import OptModel
 from data import genData
@@ -24,7 +25,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate') #0.00001
     parser.add_argument('--batch_size', type=int, default=32, help='batch size')
     parser.add_argument('--ydim', type=int, default=1000, help='dimension of y')
-    parser.add_argument('--backward_eps', type=float, default=1e-3, help='backward tolerance') #0.00001
+    parser.add_argument('--backward_eps', type=float, default=1e-5, help='backward tolerance') #0.00001
     
     parser.add_argument('--alpha', type=float, default=100, help='alpha')
     parser.add_argument('--dual_cutoff', type=float, default=1e-3, help='dual cutoff')
@@ -65,7 +66,9 @@ if __name__ == '__main__':
     # assert(len(train_loader)*batch_size == 1600)
 
     model = OptModel(input_dim, ydim, layer_type=method, constraint_learnable=(args.learn_constraint==1), batch_size=batch_size, device=device, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, backward_eps=backward_eps, is_QP=True).to(device)
-    cvxpylayer = CvxpyLayer(model.problem, parameters=model.parameters(), variables=model.variables)
+    cvxpylayer = OptModel(input_dim, ydim, layer_type="cvxpylayer", constraint_learnable=(args.learn_constraint==1), batch_size=batch_size, device=device, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, backward_eps=backward_eps, is_QP=True).to(device)
+    cvxpylayer.predictor = copy.deepcopy(model.predictor)
+    
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0)
     loss_fn = torch.nn.MSELoss()
     
@@ -96,7 +99,7 @@ if __name__ == '__main__':
     # if not os.path.exists(step_experiment_dir):
     os.makedirs(step_experiment_dir, exist_ok=True)
     with open(step_experiment_dir + filename, 'w') as step_file:
-        step_file.write('epoch, iter, train_df_loss, iter_forward_time, iter_backward_time, forward_solve_time, backward_solve_time, forward_setup_time, backward_setup_time\n')
+        step_file.write('epoch, iter, train_df_loss, iter_forward_time, iter_backward_time, forward_solve_time, backward_solve_time, forward_setup_time, backward_setup_time, cosine_sim_val, l2_dist_val, l1_dist_val, l_inf_dist_val\n')
         step_file.flush()
         
         
@@ -151,38 +154,55 @@ if __name__ == '__main__':
                 iter_start_time = time.time()
                 
                 start_time = time.time()
+                cvxpylayer.predictor = copy.deepcopy(model.predictor)
 
                 z, y_pred = model(x) # (opt solution, predicted q)
 
-                z_cvx = cvxpylayer(x)
-                z_cvx = z_cvx[0]
+                z_cvx, y_pred_cvx = cvxpylayer(x)
 
                 ts_loss = loss_fn(y_pred, y)
-                ts_loss_cvx = loss_fn(z_cvx, y)
+                ts_loss_cvx = loss_fn(y_pred_cvx, y)
                 
                 df_loss = torch.mean(y * z)
                 loss = df_loss + ts_loss * ts_weight + torch.norm(z) * norm_weight
+
+                df_loss_cvx = torch.mean(y * z_cvx)
+                loss_cvx = df_loss_cvx + ts_loss_cvx * ts_weight + torch.norm(z_cvx) * norm_weight
                 
                 forward_time_ = time.time() - start_time
                 
                 start_time = time.time()
-                loss.backward()
+                
                 with torch.no_grad():
-                    grads = torch.autograd.grad(ts_loss, model.parameters(), create_graph=True)
-                    grads_cvx = torch.autograd.grad(ts_loss_cvx, model.parameters(), create_graph=True)
-                    print(f"grads: {grads}, grads_cvx: {grads_cvx}")
+                    grads = torch.autograd.grad(loss, model.parameters(), create_graph=True)
+                    grads_cvx = torch.autograd.grad(loss_cvx, cvxpylayer.parameters(), create_graph=True)
 
-                    cosine_similarity = torch.nn.functional.cosine_similarity(grads, grads_cvx, dim=0)
-                    l2_distance = torch.norm(grads - grads_cvx, p=2)
-                    l1_distance = torch.norm(grads - grads_cvx, p=1)
-                    print(f"cosine similarity: {cosine_similarity}")
+                    grads_flat = torch.cat([g.flatten() for g in grads])
+                    grads_cvx_flat = torch.cat([g.flatten() for g in grads_cvx])
+                    
+                    cosine_similarity = torch.nn.functional.cosine_similarity(
+                        grads_flat.unsqueeze(0), 
+                        grads_cvx_flat.unsqueeze(0), 
+                        dim=1
+                    )
+                    l2_distance = torch.norm(grads_flat - grads_cvx_flat, p=2)
+                    l1_distance = torch.norm(grads_flat - grads_cvx_flat, p=1)
+                    l_inf_distance = torch.norm(grads_flat - grads_cvx_flat, p=float('inf'))
+
+                    cosine_sim_val = cosine_similarity.item()
+                    l2_dist_val = l2_distance.item()
+                    l1_dist_val = l1_distance.item()
+                    l_inf_dist_val = l_inf_distance.item()
+
+                    print(f"cosine similarity: {cosine_sim_val}")
                     print(f"l2 distance: {l2_distance}")
                     print(f"l1 distance: {l1_distance}")
+                    print(f"l_inf distance: {l_inf_distance}")
+                
+                loss.backward()
                 backward_time_ = time.time() - start_time
                 
-                
                 iter_time = time.time() - iter_start_time
-                
                 
                 do_record = True #not(epoch==0 and i==0)
                 if do_record:
@@ -213,7 +233,7 @@ if __name__ == '__main__':
                 
                 
                     with open(step_experiment_dir + filename, 'a') as step_file:
-                        step_file.write(f'{epoch},{i},{df_loss.item()},{forward_time_},{backward_time_},{forward_solve_time_},{backward_solve_time_},{forward_setup_time_},{backward_setup_time_}\n')
+                        step_file.write(f'{epoch},{i},{df_loss.item()},{forward_time_},{backward_time_},{forward_solve_time_},{backward_solve_time_},{forward_setup_time_},{backward_setup_time_},{cosine_sim_val},{l2_dist_val},{l1_dist_val},{l_inf_dist_val}\n')
                         step_file.flush()
                         
                     train_ts_loss_list.append(ts_loss.item())
