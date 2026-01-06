@@ -12,7 +12,7 @@ def _sym(P): return 0.5 * (P + P.T)
 def osqp_solve(P_csc, q_np, A_csc, l_np, u_np):
     prob = osqp.OSQP()
     prob.setup(P_csc, q_np, A_csc, l_np, u_np, verbose=False,
-               eps_abs=1e-12, eps_rel=1e-12, eps_prim_inf=1e-12, eps_dual_inf=1e-12)
+               eps_abs=1e-6, eps_rel=1e-6, eps_prim_inf=1e-6, eps_dual_inf=1e-6)
     res = prob.solve()
     if res.x is None:
         raise RuntimeError(res.info.status)

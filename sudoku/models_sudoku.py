@@ -15,7 +15,8 @@ from AltDiff import AltDiffLayer
 
 from ffocp_eq import BLOLayer
 # from ffocp_eq_multithread_wo_list import BLOLayer as BLOLayerMT
-from ffocp_eq_multithread_ghost import BLOLayer as BLOLayerMT
+# from ffocp_eq_multithread_ghost import BLOLayer as BLOLayerMT
+from ffocp_eq_cone_general_not_dpp_MT import BLOLayer as BLOLayerMT
 # from ffoqp_eq_cst import ffoqp as ffoqpLayer
 from ffoqp_eq_cst_schur import ffoqp as ffoqpLayer
 # from ffoqp_eq_cst_pdipm import ffoqp as ffoqpLayer
@@ -193,7 +194,7 @@ class SingleOptLayerSudoku(nn.Module):
                         params_list.append(params)
                         variables_list.append(variables)
                     
-                    self.optlayer = BLOLayerMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol)
+                    self.optlayer = BLOLayerMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-6, backward_eps=1e-5)
                     # self.optlayer = BLOLayerMT(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol)    
             elif layer_type==FFOQP_EQ or layer_type==FFOQP_EQ_SCHUR:
                 self.optlayer = ffoqpLayer(alpha=alpha, chunk_size=1, solver='qpsolvers')

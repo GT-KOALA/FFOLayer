@@ -283,9 +283,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
     device = torch.device(args.device) if torch.cuda.is_available() else torch.device('cpu')
 
-    if args.method == "qpth" and device != torch.device('cpu'):
+    if device != torch.device('cpu'):
         print(f"Using {device} for {args.method}")
-        experiment_dir = '../sudoku_results_{}{}/{}_gpu/'.format(args.batch_size, args.method)
+        experiment_dir = '../sudoku_results_{}/{}_gpu/'.format(args.batch_size, args.method)
     else:
         print(f"Using {device} for {args.method}")
         experiment_dir = '../sudoku_results_{}/{}/'.format(args.batch_size, args.method)
