@@ -3,6 +3,11 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+from matplotlib.lines import Line2D
+import matplotlib.ticker as mticker
+import warnings
+warnings.filterwarnings("ignore")
 
 
 sns.set_theme(style="whitegrid", context="talk")
@@ -13,23 +18,21 @@ BASE_DIR = f"../synthetic_results_{batch_size}"
 # BASE_DIR = f"../synthetic_results_1_compare_SCS_OSQP_dim200_debug"
 METHODS = [
     "cvxpylayer",
-    "qpth",
     "lpgd",
     "bpqp",
-    "dqp",
-    "altdiff",
-    "ffoqp_eq_schur",
     "ffocp_eq",
+    "dqp",
+    "qpth",
+    "ffoqp_eq",   
 ]
 METHODS_LEGEND = {
     "cvxpylayer": "CvxpyLayer",
-    "qpth": "qpth",
     "lpgd": "LPGD",
     "bpqp": "BPQP",
-    "dqp": "dQP",
-    "altdiff": "Alt-Diff",
-    "ffoqp_eq_schur": "FFOQP",
     "ffocp_eq": "FFOCP",
+    "dqp": "dQP",
+    "qpth": "qpth",
+    "ffoqp_eq": "FFOQP",
 }
 
 METHODS_STEPS = [method+"_steps" for method in METHODS]
@@ -41,16 +44,48 @@ markers_dict = {method: markers[i] for i, method in enumerate(method_order)}
 
 LINEWIDTH = 1.5
 
-
-def load_results(base_dir=BASE_DIR, methods=METHODS, methods_legend=None):
+def load_results_CP(base_dir=BASE_DIR, methods=METHODS, methods_legend=None):
     if methods_legend is None:
         methods_legend = METHODS_LEGEND
     dfs = []
     for m in methods:
         pattern = os.path.join(base_dir, m, "*.csv")
         for fp in sorted(glob.glob(pattern)):
-            df = pd.read_csv(fp)
             m = m.removesuffix("_steps")
+            
+            df = pd.read_csv(fp)
+            df["method"] = methods_legend[m]
+
+            fname = os.path.basename(fp)
+            def grab(pat, cast=float):
+                mo = re.search(pat, fname)
+                return cast(mo.group(1)) if mo else np.nan
+
+            df["seed"] = grab(r"_seed(\d+)", int)
+            df["n"] = grab(r"n(\d+)", int)
+            df["lr"]   = grab(r"lr([0-9eE\.\-]+)", float)
+            df["ydim"] = grab(r"ydim(\d+)", int)
+            dfs.append(df)
+        
+        print("method: ", m)
+        # print(df)
+        
+    if not dfs:
+        raise FileNotFoundError(f"No CSVs found under {base_dir}.")
+    return pd.concat(dfs, ignore_index=True, sort=False)
+
+def load_results_QP(base_dir=BASE_DIR, methods=METHODS, methods_legend=None):
+    if methods_legend is None:
+        methods_legend = METHODS_LEGEND
+    dfs = []
+    for m in methods:
+        pattern = os.path.join(base_dir, m, "*.csv")
+        for fp in sorted(glob.glob(pattern)):
+            m = m.removesuffix("_steps")
+            if m == "ffocp_eq" and "backwardTol" not in os.path.basename(fp):
+                continue
+            
+            df = pd.read_csv(fp)
             df["method"] = methods_legend[m]
 
             fname = os.path.basename(fp)
@@ -109,24 +144,105 @@ def plot_time_vs_epoch(df, time_names=['forward_time', 'backward_time'], iterati
     plt.savefig(f"{plot_path}/{plot_name_tag}_backward_time_vs_{iteration_name}.png", dpi=300, bbox_inches='tight')
     plt.close()
 
-def plot_total_time_vs_method(df, time_names=['forward_time', 'backward_time'], plot_path=BASE_DIR, plot_name_tag=""):
-    # Group by method, average over epochs and seeds
-    df_avg_method = df.groupby('method')[time_names].mean().reset_index()
+# def plot_total_time_vs_method(df, time_names=['forward_time', 'backward_time'], plot_path=BASE_DIR, plot_name_tag=""):
+#     # Group by method, average over epochs and seeds
+#     df_avg_method = df.groupby('method')[time_names].mean().reset_index()
 
-    # --- Stacked Bar Chart ---
-    methods = df_avg_method['method']
-    forward = df_avg_method[time_names[0]]
-    backward = df_avg_method[time_names[1]]
+#     # --- Stacked Bar Chart ---
+#     methods = df_avg_method['method']
+#     forward = df_avg_method[time_names[0]]
+#     backward = df_avg_method[time_names[1]]
 
-    plt.figure(figsize=(8,5))
-    plt.bar(methods, forward, label=time_names[0], color=palette[0])
-    plt.bar(methods, backward, bottom=forward, label=time_names[1], color=palette[1])
-    plt.ylabel("Time")
-    plt.title("Total Time vs Method")
-    plt.legend()
-    plt.savefig(f"{plot_path}/{plot_name_tag}_total_time_vs_method.pdf", dpi=300, bbox_inches='tight')
-    # plt.savefig(f"{plot_path}/{plot_name_tag}_total_time_vs_method.png", dpi=300, bbox_inches='tight')
-    plt.close()
+#     plt.figure(figsize=(8,5))
+#     plt.bar(methods, forward, label=time_names[0], color=palette[0])
+#     plt.bar(methods, backward, bottom=forward, label=time_names[1], color=palette[1])
+#     plt.ylabel("Time")
+#     plt.title("Total Time vs Method")
+#     plt.legend()
+#     plt.savefig(f"{plot_path}/{plot_name_tag}_total_time_vs_method.pdf", dpi=300, bbox_inches='tight')
+#     # plt.savefig(f"{plot_path}/{plot_name_tag}_total_time_vs_method.png", dpi=300, bbox_inches='tight')
+#     plt.close()
+
+def plot_total_time_vs_method(
+    df,
+    time_names=["forward_time", "backward_time"],
+    plot_path=BASE_DIR,
+    plot_name_tag="",
+):
+    available_methods = set(df["method"].unique())
+    filtered_method_order = [m for m in method_order if m in available_methods]
+
+    df_avg_method = df.groupby("method")[time_names].mean().reindex(filtered_method_order)
+
+    methods = df_avg_method.index.tolist()
+    forward = df_avg_method[time_names[0]].to_numpy()
+    backward = df_avg_method[time_names[1]].to_numpy()
+
+    total_times = forward + backward
+    max_time = np.nanmax(total_times)
+    min_time = 0
+    y_max = max_time * 1.05
+
+    dashed_methods = {"CvxpyLayer", "LPGD", "BPQP", "FFOCP"}  # CP
+    x = np.arange(len(methods))
+    width = 0.75
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    sf = mticker.ScalarFormatter(useOffset=False)
+    sf.set_scientific(False)
+    ax.yaxis.set_major_formatter(sf)
+    ax.yaxis.get_offset_text().set_visible(False)
+
+    for i, m in enumerate(methods):
+        is_dashed = (m in dashed_methods)
+        ls = (0, (4, 2)) if is_dashed else "solid"
+        lw = 2.0 if is_dashed else 1.5
+
+        ax.bar(x[i], forward[i], width=width,
+               color=palette[0], edgecolor="black", linewidth=lw, linestyle=ls)
+        ax.bar(x[i], backward[i], bottom=forward[i], width=width,
+               color=palette[1], edgecolor="black", linewidth=lw, linestyle=ls)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(methods)
+    ax.set_ylabel("Time")
+    ax.set_title("Total Time vs Methods")
+    ax.set_ylim(min_time, y_max)
+
+    handles = [
+        Line2D([], [], linestyle="none", label="Comp. Time"),
+        Patch(facecolor=palette[0], edgecolor="black", label="Forward"),
+        Patch(facecolor=palette[1], edgecolor="black", label="Backward"),
+        Line2D([], [], linestyle="none", label=""),
+        Line2D([], [], linestyle="none", label="Solvers"),
+        Line2D([0], [0], color="black", linewidth=2, linestyle=(0, (4, 2)), label="CP methods"),
+        Line2D([0], [0], color="black", linewidth=2, linestyle="solid", label="QP methods"),
+    ]
+
+    leg = ax.legend(
+        handles=handles,
+        loc="upper right",
+        frameon=True,
+        handlelength=2.2,
+        handletextpad=0.8,
+        borderpad=0.7,
+        labelspacing=0.1,
+    )
+    leg._legend_box.align = "left"
+
+    for h, t in zip(leg.legend_handles, leg.get_texts()):
+        txt = t.get_text()
+        if txt in ("Comp. Time", "Solvers"):
+            t.set_weight("bold")
+            if hasattr(h, "set_visible"):
+                h.set_visible(False)
+        if txt == "":
+            if hasattr(h, "set_visible"):
+                h.set_visible(False)
+            t.set_color((0, 0, 0, 0))
+
+    fig.savefig(f"{plot_path}/{plot_name_tag}_total_time_vs_method.pdf", dpi=300, bbox_inches="tight")
+    plt.close(fig)
     
 def plot_loss_vs_epoch(df, loss_metric_name, iteration_name='epoch', plot_path=BASE_DIR, plot_name_tag="", loss_range=None, stride=50):
     df_avg_epoch = df.groupby(['method', iteration_name])[[loss_metric_name]].mean().reset_index()
@@ -319,12 +435,591 @@ def plot_loss_vs_epoch_method_tol(df, loss_metric='train_df_loss', iteration='ep
     plt.savefig(f"{plot_path}/{plot_name_tag}_{loss_metric}_vs_{iteration}.pdf", dpi=300, bbox_inches='tight')
     plt.close()
 
+def plot_time_scaling_vs_ydim(
+    df,
+    time_names=("forward_time", "backward_time"),
+    plot_path=BASE_DIR,
+    plot_name_tag="syn",
+    methods_order=None,
+    markers_dict=markers_dict,
+    dashed_methods=("CvxpyLayer", "LPGD", "BPQP", "FFOCP"),  # CP
+    agg="mean",
+    logy=False,
+    y_min=None,
+    y_max=None,
+    filter_backwardTol=None,
+):
+    os.makedirs(plot_path, exist_ok=True)
 
-        
+    d = df.copy().dropna(subset=["ydim", "method"])
+    d["ydim"] = d["ydim"].astype(int)
+
+    if "backwardTol" in d.columns and filter_backwardTol is not None:
+        d = d[np.isclose(d["backwardTol"].astype(float), float(filter_backwardTol))]
+
+    gfunc = "median" if agg == "median" else "mean"
+    g = getattr(d.groupby(["method", "ydim"], as_index=False)[list(time_names)], gfunc)()
+    g["total_time"] = g[time_names[0]] + g[time_names[1]]
+
+    if methods_order is None:
+        methods_order = (
+            [m for m in d["method"].cat.categories if m in g["method"].unique()]
+            if isinstance(d["method"].dtype, pd.CategoricalDtype)
+            else sorted(g["method"].unique())
+        )
+    else:
+        methods_order = [m for m in methods_order if m in g["method"].unique()]
+
+    plt.rcParams.update({
+        "font.size": 13, "axes.titlesize": 14, "axes.labelsize": 13,
+        "legend.fontsize": 11, "xtick.labelsize": 12, "ytick.labelsize": 12,
+    })
+
+    fig, axes = plt.subplots(1, 3, figsize=(15.5, 4.2), sharex=True)
+    panels = [
+        ("total_time", "Total time"),
+        (time_names[0], "Forward time"),
+        (time_names[1], "Backward time"),
+    ]
+
+    dashed_methods = set(dashed_methods)
+
+    for ax, (col, title) in zip(axes, panels):
+        for i, method in enumerate(methods_order):
+            gg = g[g["method"] == method].sort_values("ydim")
+            if gg.empty:
+                continue
+
+            is_dashed = method in dashed_methods
+            ax.plot(
+                gg["ydim"], gg[col],
+                label=method,
+                marker=markers_dict.get(method, markers[i % len(markers)]),
+                markersize=5.5,
+                linewidth=2.2 if is_dashed else 2.0,
+                linestyle=(0, (4, 2)) if is_dashed else "solid",
+            )
+
+        ax.set_title(title)
+        ax.set_xlabel("y dim")
+        ax.grid(True, which="major", alpha=0.25)
+        ax.grid(True, which="minor", alpha=0.12)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        if logy:
+            ax.set_yscale("log")
+        if y_min is not None or y_max is not None:
+            ax.set_ylim(bottom=y_min, top=y_max)
+
+        ax.yaxis.set_major_formatter(mticker.ScalarFormatter(useOffset=False))
+        ax.yaxis.get_offset_text().set_visible(False)
+
+    axes[0].set_ylabel("time (s)")
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    ncol = min(len(labels), 4) 
+    fig.legend(
+        handles, labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.02),
+        fontsize=14,
+        ncol=ncol,
+        frameon=False,
+        handlelength=2.4,
+        handletextpad=0.6,
+        columnspacing=1.2,
+    )
+
+    # leave space at bottom for legend
+    fig.tight_layout(rect=[0, 0.12, 1, 1])
+
+    out = os.path.join(plot_path, f"{plot_name_tag}_time_scaling_vs_ydim.pdf")
+    fig.savefig(out, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+def discover_batch_dirs(root_dir="..", prefix="synthetic_results_"):
+    cand = glob.glob(os.path.join(root_dir, f"{prefix}*"))
+    out = []
+    for p in cand:
+        if not os.path.isdir(p):
+            continue
+        name = os.path.basename(p.rstrip("/"))
+        mo = re.match(rf"^{re.escape(prefix)}(\d+)$", name)
+        if mo:
+            out.append((int(mo.group(1)), p))
+    out.sort(key=lambda x: x[0])
+    if not out:
+        raise FileNotFoundError(f"No dirs like {prefix}{{int}} under {root_dir}")
+    return out
+
+
+def load_results_across_batches(
+    root_dir="..",
+    batch_sizes=None,
+    loader_fn=None,
+    methods=None,
+    methods_legend=None,
+    prefix="synthetic_results_",
+):
+    if loader_fn is None:
+        raise ValueError("Please pass loader_fn=load_results_CP or load_results_QP")
+    if methods is None:
+        methods = METHODS
+    if methods_legend is None:
+        methods_legend = METHODS_LEGEND
+
+    if batch_sizes is None:
+        batch_dirs = discover_batch_dirs(root_dir=root_dir, prefix=prefix)
+    else:
+        batch_dirs = [(int(bs), os.path.join(root_dir, f"{prefix}{int(bs)}")) for bs in batch_sizes]
+
+    dfs = []
+    for bs, dpath in batch_dirs:
+        if not os.path.isdir(dpath):
+            print(f"[WARN] missing dir: {dpath}, skip")
+            continue
+
+        df = loader_fn(base_dir=dpath, methods=methods, methods_legend=methods_legend)
+        df = df.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
+        df["batch_size"] = int(bs)
+        dfs.append(df)
+
+    if not dfs:
+        raise FileNotFoundError("No results loaded across batches. Check dirs / patterns.")
+    out = pd.concat(dfs, ignore_index=True, sort=False)
+    return out
+
+
+# def plot_time_scaling_vs_batch(
+#     df,
+#     time_names=("forward_time", "backward_time"),
+#     plot_path=".",
+#     plot_name_tag="syn",
+#     methods_order=None,
+#     dashed_methods=("CvxpyLayer", "LPGD", "BPQP", "FFOCP"),  # CP
+#     agg="mean",
+#     logx=True,
+#     logy=False,
+#     y_min=None,
+#     y_max=None,
+#     filter_ydim=None,
+#     filter_backwardTol=None,
+# ):
+#     os.makedirs(plot_path, exist_ok=True)
+#     markers = ["o", "s", "D", "^", "v", "x", "P", "s"]
+#     markers_dict = {method: markers[i] for i, method in enumerate(methods_order)}
+
+#     d = df.copy()
+
+#     if "batch_size" not in d.columns:
+#         raise KeyError("df must contain column 'batch_size' (use load_results_across_batches).")
+#     if "method" not in d.columns:
+#         raise KeyError("df must contain column 'method'.")
+
+#     if filter_ydim is not None:
+#         if "ydim" not in d.columns:
+#             raise KeyError("filter_ydim is set but df has no 'ydim' column.")
+#         d = d.dropna(subset=["ydim"])
+#         d = d[d["ydim"].astype(int) == int(filter_ydim)]
+
+#     if "backwardTol" in d.columns and filter_backwardTol is not None:
+#         d = d.dropna(subset=["backwardTol"])
+#         d = d[np.isclose(d["backwardTol"].astype(float), float(filter_backwardTol))]
+
+#     d = d.dropna(subset=["batch_size", "method"])
+#     d["batch_size"] = d["batch_size"].astype(int)
+
+#     gfunc = "median" if agg == "median" else "mean"
+#     g = getattr(d.groupby(["method", "batch_size"], as_index=False)[list(time_names)], gfunc)()
+#     g["total_time"] = g[time_names[0]] + g[time_names[1]]
+
+#     if methods_order is None:
+#         if isinstance(d["method"].dtype, pd.CategoricalDtype):
+#             methods_order = [m for m in d["method"].cat.categories if m in g["method"].unique()]
+#         else:
+#             methods_order = sorted(g["method"].unique())
+#     else:
+#         methods_order = [m for m in methods_order if m in g["method"].unique()]
+
+#     plt.rcParams.update({
+#         "font.size": 13, "axes.titlesize": 14, "axes.labelsize": 13,
+#         "legend.fontsize": 11, "xtick.labelsize": 12, "ytick.labelsize": 12,
+#     })
+
+#     fig, axes = plt.subplots(1, 3, figsize=(15.5, 4.2), sharex=True)
+#     panels = [
+#         ("total_time", "Total time"),
+#         (time_names[0], "Forward time"),
+#         (time_names[1], "Backward time"),
+#     ]
+#     dashed_methods = set(dashed_methods)
+
+#     for ax, (col, title) in zip(axes, panels):
+#         for i, method in enumerate(methods_order):
+#             gg = g[g["method"] == method].sort_values("batch_size")
+#             if gg.empty:
+#                 continue
+
+#             is_dashed = method in dashed_methods
+#             ax.plot(
+#                 gg["batch_size"], gg[col],
+#                 label=method,
+#                 marker=markers_dict.get(method, markers[i % len(markers)]),
+#                 markersize=5.5,
+#                 linewidth=2.2 if is_dashed else 2.0,
+#                 linestyle=(0, (4, 2)) if is_dashed else "solid",
+#             )
+
+#         ax.set_title(title)
+#         ax.set_xlabel("batch size")
+#         ax.grid(True, which="major", alpha=0.25)
+#         ax.grid(True, which="minor", alpha=0.12)
+#         ax.spines["top"].set_visible(False)
+#         ax.spines["right"].set_visible(False)
+
+#         if logx:
+#             ax.set_xscale("log", base=2)
+#             ax.xaxis.set_major_formatter(mticker.ScalarFormatter())
+#             ax.set_xticks(sorted(g["batch_size"].unique()))
+#             ax.get_xaxis().set_major_formatter(mticker.ScalarFormatter())
+
+#         if logy:
+#             ax.set_yscale("log")
+#         if y_min is not None or y_max is not None:
+#             ax.set_ylim(bottom=y_min, top=y_max)
+
+#         ax.yaxis.set_major_formatter(mticker.ScalarFormatter(useOffset=False))
+#         ax.yaxis.get_offset_text().set_visible(False)
+
+#     axes[0].set_ylabel("time (s)")
+
+#     handles, labels = axes[0].get_legend_handles_labels()
+#     ncol = min(len(labels), 4)
+#     fig.legend(
+#         handles, labels,
+#         loc="lower center",
+#         bbox_to_anchor=(0.5, -0.02),
+#         fontsize=14,
+#         ncol=ncol,
+#         frameon=False,
+#         handlelength=2.4,
+#         handletextpad=0.6,
+#         columnspacing=1.2,
+#     )
+
+#     fig.tight_layout(rect=[0, 0.12, 1, 1])
+
+#     suffix = ""
+#     if filter_ydim is not None:
+#         suffix += f"_ydim{int(filter_ydim)}"
+#     if filter_backwardTol is not None:
+#         suffix += f"_bwdTol{filter_backwardTol:g}"
+
+#     out = os.path.join(plot_path, f"{plot_name_tag}_time_scaling_vs_batch{suffix}.pdf")
+#     fig.savefig(out, dpi=300, bbox_inches="tight")
+#     plt.close(fig)
+
+#     print(f"[saved] {out}")
+
+def plot_time_scaling_vs_batch(
+    df,
+    plot_path=".",
+    plot_name_tag="syn",
+    methods_order=None,
+    markers_dict=None,
+    dashed_methods=("CvxpyLayer", "LPGD", "BPQP", "FFOCP"),
+    agg="mean",                 # "mean" or "median"
+    use_log2_x=True,
+    logy=False,
+    y_min=None,
+    y_max=None,
+    filter_backwardTol=None,    # optional if df has backwardTol
+):
+    os.makedirs(plot_path, exist_ok=True)
+    d = df.copy().dropna(subset=["batch_size", "method"])
+    d["batch_size"] = d["batch_size"].astype(int)
+
+    if "backwardTol" in d.columns and filter_backwardTol is not None:
+        d = d[np.isclose(d["backwardTol"].astype(float), float(filter_backwardTol))]
+
+    for c in ["forward_time", "backward_time"]:
+        if c not in d.columns:
+            raise ValueError(f"missing column: {c}")
+        d[c] = d[c].astype(float)
+
+    # derive step/overhead
+    if "overhead_time" in d.columns:
+        d["overhead_time"] = d["overhead_time"].astype(float)
+        d["step_time"] = d["forward_time"] + d["backward_time"] + d["overhead_time"]
+    else:
+        if "step_time" in d.columns:
+            d["step_time"] = d["step_time"].astype(float)
+        elif "total_time" in d.columns:
+            d["step_time"] = d["total_time"].astype(float)
+        else:
+            d["step_time"] = d["forward_time"] + d["backward_time"]
+        d["overhead_time"] = (d["step_time"] - d["forward_time"] - d["backward_time"]).clip(lower=0.0)
+
+    gfunc = "median" if agg == "median" else "mean"
+    g = getattr(
+        d.groupby(["method", "batch_size"], as_index=False)[
+            ["forward_time", "backward_time", "overhead_time", "step_time"]
+        ],
+        gfunc,
+    )()
+
+    eps = 1e-12
+    g["throughput"] = g["batch_size"] / g["step_time"].clip(lower=eps)
+    g["per_sample"] = g["step_time"] / g["batch_size"].clip(lower=1)       # sec/sample
+
+    # method order (match your style)
+    if methods_order is None:
+        methods_order = (
+            [m for m in d["method"].cat.categories if m in g["method"].unique()]
+            if isinstance(d["method"].dtype, pd.CategoricalDtype)
+            else sorted(g["method"].unique())
+        )
+    else:
+        methods_order = [m for m in methods_order if m in g["method"].unique()]
+
+    # style (copy yours)
+    plt.rcParams.update({
+        "font.size": 13, "axes.titlesize": 14, "axes.labelsize": 13,
+        "legend.fontsize": 11, "xtick.labelsize": 12, "ytick.labelsize": 12,
+    })
+
+    dashed_methods = set(dashed_methods)
+    markers = ["o", "s", "D", "^", "v", "P", "X", "*", "<", ">"]
+
+    xvals = np.array(sorted(g["batch_size"].unique().tolist()), dtype=int)
+    xplot = np.log2(xvals) if use_log2_x else xvals
+    xticks = xplot
+    xtick_labels = [str(v) for v in xvals]
+    xlabel = "batch size" if use_log2_x else "batch size"
+
+    fig, axes = plt.subplots(1, 3, figsize=(15.5, 4.2), sharex=True)
+    panels = [
+        ("throughput", "Throughput (samples/sec)"),
+        ("step_time", "Time per step (sec)"),
+        ("per_sample", "Per-sample cost (sec/sample)"),
+    ]
+
+    for ax, (col, title) in zip(axes, panels):
+        for i, method in enumerate(methods_order):
+            gg = g[g["method"] == method].sort_values("batch_size")
+            if gg.empty:
+                continue
+
+            xx = np.log2(gg["batch_size"].to_numpy()) if use_log2_x else gg["batch_size"].to_numpy()
+            is_dashed = method in dashed_methods
+            mk = (markers_dict.get(method) if markers_dict else None) or markers[i % len(markers)]
+
+            ax.plot(
+                xx, gg[col].to_numpy(),
+                label=method,
+                marker=mk,
+                markersize=5.5,
+                linewidth=2.2 if is_dashed else 2.0,
+                linestyle=(0, (4, 2)) if is_dashed else "solid",
+            )
+
+            # decomposition shading only on panel 2 (step_time)
+            if col == "step_time":
+                fwd = gg["forward_time"].to_numpy()
+                bwd = gg["backward_time"].to_numpy()
+                ovh = gg["overhead_time"].to_numpy()
+                ax.fill_between(xx, 0, fwd, alpha=0.06)
+                ax.fill_between(xx, fwd, fwd + bwd, alpha=0.06)
+                ax.fill_between(xx, fwd + bwd, fwd + bwd + ovh, alpha=0.06)
+
+        ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_xticks(xticks)
+        ax.set_xticklabels(xtick_labels)
+
+        ax.grid(True, which="major", alpha=0.25)
+        ax.grid(True, which="minor", alpha=0.12)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        if logy:
+            ax.set_yscale("log")
+        if y_min is not None or y_max is not None:
+            ax.set_ylim(bottom=y_min, top=y_max)
+
+        ax.yaxis.set_major_formatter(mticker.ScalarFormatter(useOffset=False))
+        ax.yaxis.get_offset_text().set_visible(False)
+
+    # shared legend (same as your function)
+    handles, labels = axes[0].get_legend_handles_labels()
+    ncol = min(len(labels), 4)
+    fig.legend(
+        handles, labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.02),
+        fontsize=14,
+        ncol=ncol,
+        frameon=False,
+        handlelength=2.4,
+        handletextpad=0.6,
+        columnspacing=1.2,
+    )
+    fig.tight_layout(rect=[0, 0.12, 1, 1])
+
+    out = os.path.join(plot_path, f"{plot_name_tag}_batch_scaling_3panels.pdf")
+    fig.savefig(out, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def load_comp_grad_results_metrics(
+    base_dir,
+    methods,
+    methods_legend,
+    parse_backwardTol=True,
+):
+    dfs = []
+    for mm in methods:
+        pattern = os.path.join(base_dir, mm, "*.csv")
+        for fp in sorted(glob.glob(pattern)):
+            m = mm.removesuffix("_steps")
+            df = pd.read_csv(fp)
+            df["method"] = methods_legend[m]
+
+            fname = os.path.basename(fp)
+            def grab(pat, cast=float):
+                mo = re.search(pat, fname)
+                return cast(mo.group(1)) if mo else np.nan
+
+            df["seed"] = grab(r"_seed(\d+)", int)
+            df["ydim"] = grab(r"ydim(\d+)", int)
+            df["lr"]   = grab(r"lr([0-9eE\.\-]+)", float)
+
+            if parse_backwardTol:
+                df["backwardTol"] = grab(r"backwardTol([0-9eE\+\-\.]+?)(?:_|\.csv)", float)
+
+            dfs.append(df)
+
+    if not dfs:
+        raise FileNotFoundError(f"No CSVs found under {base_dir}.")
+    out = pd.concat(dfs, ignore_index=True, sort=False)
+    out = out.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
+    return out
+
+
+def plot_comp_grad_metrics_vs_iter_by_ydim(
+    df,
+    metrics=("cosine_sim_val", "l2_dist_val", "l_inf_dist_val"),
+    plot_path=".",
+    plot_name_tag="syn",
+    filter_method=None,
+    filter_backwardTol=None,
+    agg="mean",
+    logy_dist=True,                     
+    cosine_ylim=None,                   
+    ydim_order=None,                    
+    markers=("o","s","D","^","v","x","P","*"),
+    linewidth=2.0,
+    legend_ncol=5,
+    legend_y=-0.06,
+    legend_fontsize=11,
+):
+    os.makedirs(plot_path, exist_ok=True)
+
+    d = df.copy().dropna(subset=["iter", "ydim"])
+    d["iter"] = d["iter"].astype(int)
+    d["ydim"] = d["ydim"].astype(int)
+
+    if filter_method is not None:
+        d = d[d["method"] == filter_method]
+
+    if filter_backwardTol is not None and "backwardTol" in d.columns:
+        d = d[np.isclose(d["backwardTol"].astype(float), float(filter_backwardTol))]
+
+    if "backwardTol" in d.columns and filter_backwardTol is None and d["backwardTol"].nunique() > 1:
+        bt = d["backwardTol"].mode().iloc[0]
+        d = d[np.isclose(d["backwardTol"].astype(float), float(bt))]
+
+    gfunc = "median" if agg == "median" else "mean"
+    g = getattr(d.groupby(["ydim", "iter"], as_index=False)[list(metrics)], gfunc)()
+
+    if ydim_order is None:
+        ydim_order = sorted(g["ydim"].unique())
+
+    titles = {
+        "cosine_sim_val": "Cosine similarity",
+        "l2_dist_val":    r"$\ell_2$ distance",
+        "l_inf_dist_val": r"$\ell_\infty$ distance",
+    }
+
+    plt.rcParams.update({
+        "font.size": 13,
+        "axes.titlesize": 14,
+        "axes.labelsize": 13,
+        "xtick.labelsize": 12,
+        "ytick.labelsize": 12,
+    })
+
+    fig, axes = plt.subplots(1, 3, figsize=(15.5, 4.2), sharex=True)
+
+    for ax, metric in zip(axes, metrics):
+        for i, ydim in enumerate(ydim_order):
+            gg = g[g["ydim"] == ydim].sort_values("iter")
+            if gg.empty:
+                continue
+            ax.plot(
+                gg["iter"], gg[metric],
+                label=f"ydim={ydim}",
+                marker=markers[i % len(markers)],
+                markersize=5.0,
+                linewidth=linewidth,
+            )
+
+        ax.set_title(titles.get(metric, metric))
+        ax.set_xlabel("iterations")
+        ax.grid(True, which="major", alpha=0.25)
+        ax.grid(True, which="minor", alpha=0.12)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.yaxis.set_major_formatter(mticker.ScalarFormatter(useOffset=False))
+        ax.yaxis.get_offset_text().set_visible(False)
+
+        if metric == "cosine_sim_val" and cosine_ylim is not None:
+            ax.set_ylim(*cosine_ylim)
+        if metric != "cosine_sim_val" and logy_dist:
+            ax.set_yscale("log")
+
+    axes[0].set_ylabel("value")
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(
+        handles, labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, legend_y),
+        ncol=min(len(labels), legend_ncol),
+        frameon=False,
+        fontsize=legend_fontsize,
+        handlelength=2.4,
+        handletextpad=0.6,
+        columnspacing=1.2,
+        borderaxespad=0.0,
+    )
+
+    fig.tight_layout(rect=[0, 0.14, 1, 1])
+
+    tag = plot_name_tag
+    if filter_method is not None:
+        tag += f"_{filter_method}"
+    out = os.path.join(plot_path, f"{tag}_metrics_vs_iter_by_ydim.pdf")
+    fig.savefig(out, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
 
 if __name__=="__main__":
     
-    df = load_results()
+    df = load_results_CP()
     df = df.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
     df["method"] = pd.Categorical(df["method"], categories=method_order, ordered=True)
 
@@ -335,7 +1030,7 @@ if __name__=="__main__":
                                              plot_path=BASE_DIR, plot_name_tag="syn")
    
    #########################################
-    df = load_results(methods=METHODS_STEPS)
+    df = load_results_CP(methods=METHODS_STEPS)
     df = df.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
     df["method"] = pd.Categorical(df["method"], categories=method_order, ordered=True)
 

@@ -10,8 +10,8 @@ import sys
 import os
 import argparse
 
-from models import *
-from data import *
+from models import OptModel
+from data import genData
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -24,7 +24,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate') #0.00001
     parser.add_argument('--batch_size', type=int, default=32, help='batch size')
     parser.add_argument('--ydim', type=int, default=1000, help='dimension of y')
-    parser.add_argument('--backward_eps', type=float, default=1e-1, help='backward tolerance') #0.00001
+    parser.add_argument('--backward_eps', type=float, default=1e-3, help='backward tolerance') #0.00001
     
     parser.add_argument('--alpha', type=float, default=100, help='alpha')
     parser.add_argument('--dual_cutoff', type=float, default=1e-3, help='dual cutoff')
@@ -74,8 +74,15 @@ if __name__ == '__main__':
     deltas = [torch.zeros_like(parameter) for parameter in model.parameters()]
     gradients = [torch.zeros_like(parameter) for parameter in model.parameters()]
 
-    directory = '../synthetic_results_{}{}/{}/'.format(args.batch_size, args.suffix, method)
-    filename = '{}_ydim{}_lr{}_seed{}_backwardTol{}.csv'.format(method, ydim, learning_rate, seed, backward_eps)
+    if method == "qpth" and device != "cpu":
+        directory = '../synthetic_results_{}{}/{}_gpu/'.format(args.batch_size, args.suffix, method)
+    else:
+        directory = '../synthetic_results_{}{}/{}/'.format(args.batch_size, args.suffix, method)
+
+    if method == "ffocp_eq":
+        filename = '{}_ydim{}_lr{}_seed{}_backwardTol{}.csv'.format(method, ydim, learning_rate, seed, backward_eps)
+    else:
+        filename = '{}_ydim{}_lr{}_seed{}.csv'.format(method, ydim, learning_rate, seed)
     # if os.path.exists(directory + filename):
     #     os.remove(directory + filename)
 

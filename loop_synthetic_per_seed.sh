@@ -3,7 +3,7 @@
 
 seeds=($(seq 1 10))   # ← ARRAY, not string
 
-# ydims=($(seq 100 100 1000))
+# ydims=($(seq 200 100 1000))
 ydims=(900)
 
 # backward_eps_list=    #($(seq 0.001 0.00001 0.00000001)) #0.001,0.00001,0.00000001, 0.000000000001

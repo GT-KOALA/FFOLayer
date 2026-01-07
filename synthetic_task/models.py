@@ -22,7 +22,7 @@ from cvxpylayers_local.cvxpylayer import CvxpyLayer
 from cvxpylayers_local.cvxpylayer import CvxpyLayer as LPGDLayer
 
 from BPQP import BPQPLayer
-from BPQP_socp import BPQPLayer as BPQPLayer_socp
+from BPQP_socp import BPQPLayer_socp
 from AltDiff import AltDiffLayer
 from AltDiff_socp import AltDiffLayer as AltDiffLayer_socp
 
@@ -130,7 +130,7 @@ def get_feasible_h(G, z0, s0):
 
 
 class OptModel(nn.Module):
-    def __init__(self, input_dim, opt_dim, layer_type, constraint_learnable, device, batch_size, alpha=100, dual_cutoff=1e-3, slack_tol=1e-6, backward_eps=1e-5, is_QP=False):
+    def __init__(self, input_dim, opt_dim, layer_type, constraint_learnable, device, batch_size, alpha=100, dual_cutoff=1e-3, slack_tol=1e-6, backward_eps=1e-8, is_QP=False):
         '''
         The architecture is {parameter - optLayer}.
             
@@ -205,7 +205,7 @@ class OptModel(nn.Module):
                             variables_list.append(variables)
                         
                         # self.optlayer = BLOLayerMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12)
-                        self.optlayer = BLOLayerGeneralMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-8, backward_eps=backward_eps)
+                        self.optlayer = BLOLayerGeneralMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, backward_eps=1e-3)
                         
                 elif layer_type==CVXPY_LAYER:
                     self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
@@ -245,7 +245,7 @@ class OptModel(nn.Module):
                 if self.layer_type==QPTH:
                     self.optlayer = QPFunction(verbose=-1)
                 elif self.layer_type==BPQP:
-                    self.optlayer = BPQPLayer()
+                    self.optlayer = BPQPLayer(forward_eps=1e-12, backward_eps=1e-10)
                 elif self.layer_type==ALTDIFF:
                     self.optlayer = AltDiffLayer()
                 elif self.layer_type==DQP:
@@ -292,13 +292,13 @@ class OptModel(nn.Module):
                         params_list.append(params)
                         variables_list.append(variables)
                     
-                    self.optlayer = BLOLayerGeneralMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-8, backward_eps=backward_eps)
+                    self.optlayer = BLOLayerGeneralMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=1000.0, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, backward_eps=backward_eps)
             elif layer_type==CVXPY_LAYER:
                 self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
             elif layer_type==LPGD:
                 self.optlayer = LPGDLayer(problem, parameters=params, variables=variables, lpgd=True)
             elif layer_type==BPQP:
-                self.optlayer = BPQPLayer_socp()
+                self.optlayer = BPQPLayer_socp(forward_eps=1e-12, backward_eps=1e-10)
             elif layer_type==ALTDIFF:
                 self.optlayer = AltDiffLayer_socp()
             else:

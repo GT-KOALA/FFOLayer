@@ -9,10 +9,10 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 def _np(x): return x.detach().cpu().numpy()
 def _sym(P): return 0.5 * (P + P.T)
 
-def osqp_solve(P_csc, q_np, A_csc, l_np, u_np):
+def osqp_solve(P_csc, q_np, A_csc, l_np, u_np, eps=1e-6):
     prob = osqp.OSQP()
     prob.setup(P_csc, q_np, A_csc, l_np, u_np, verbose=False,
-               eps_abs=1e-5, eps_rel=1e-5, eps_prim_inf=1e-5, eps_dual_inf=1e-5)
+               eps_abs=eps, eps_rel=eps, eps_prim_inf=eps, eps_dual_inf=eps)
     res = prob.solve()
     if res.x is None:
         raise RuntimeError(res.info.status)
@@ -35,7 +35,7 @@ def pack_osqp(P, q, G, h, A, b):
         u = hn
     return sp.csc_matrix(Pn), qn, Aos, l.astype(np.float64), u.astype(np.float64), m, p, Gn, hn, An
 
-def bpqp_backward(xn, yn, P_csc, Gn, hn, An, gnp, m, p, act_tol):
+def bpqp_backward(xn, yn, P_csc, Gn, hn, An, gnp, m, p, act_tol, backward_eps):
     lam = yn[:m] if m > 0 else np.zeros((0,), dtype=np.float64)
     if m > 0:
         resid = (Gn @ xn) - hn
@@ -54,10 +54,10 @@ def bpqp_backward(xn, yn, P_csc, Gn, hn, An, gnp, m, p, act_tol):
         return z, yb, active
     Ab = sp.csc_matrix(np.vstack(rows))
     k = Ab.shape[0]
-    z, yb = osqp_solve(P_csc, gnp.astype(np.float64), Ab, np.zeros(k), np.zeros(k))
+    z, yb = osqp_solve(P_csc, gnp.astype(np.float64), Ab, np.zeros(k), np.zeros(k), eps=backward_eps)
     return z, yb, active
 
-def BPQPLayer(sign=1, act_tol=1e-6):
+def BPQPLayer(sign=1, act_tol=1e-6, forward_eps=1e-6, backward_eps=1e-10):
     class _Layer(Function):
         @staticmethod
         def forward(ctx, P, q, G, h, A, b):
@@ -72,21 +72,21 @@ def BPQPLayer(sign=1, act_tol=1e-6):
                 Ai = A[i] if A.dim() == 3 else A
                 bi = b[i] if b.dim() == 2 else b
                 P_csc, qn, Aos, l, u, m, p, *_ = pack_osqp(Pi, sign * qi, Gi, hi, Ai, bi)
-                x, y = osqp_solve(P_csc, qn, Aos, l, u)
+                x, y = osqp_solve(P_csc, qn, Aos, l, u, eps=forward_eps)
                 xs.append(torch.from_numpy(x).to(device=Pi.device, dtype=Pi.dtype))
                 ys.append(torch.from_numpy(y).to(device=Pi.device, dtype=Pi.dtype))
                 ms.append(m); ps.append(p)
             x = torch.stack(xs, 0) if batched else xs[0]
             y = torch.stack(ys, 0) if batched else ys[0]
             ctx.save_for_backward(P, q, G, h, A, b, x, y)
-            ctx.meta = (batched, B, sign, act_tol, ms, ps)
+            ctx.meta = (batched, B, sign, act_tol, forward_eps, backward_eps, ms, ps)
 
             return x
 
         @staticmethod
         def backward(ctx, grad_output):
             P, q, G, h, A, b, x, y = ctx.saved_tensors
-            batched, B, sign, act_tol, ms, ps = ctx.meta
+            batched, B, sign, act_tol, forward_eps, backward_eps, ms, ps = ctx.meta
             gP = torch.zeros_like(P); gq = torch.zeros_like(q); gG = torch.zeros_like(G)
             gh = torch.zeros_like(h); gA = torch.zeros_like(A); gb = torch.zeros_like(b)
             for i in range(B):
@@ -100,7 +100,7 @@ def BPQPLayer(sign=1, act_tol=1e-6):
                 yi = y[i] if batched else y
                 gi = grad_output[i] if batched else grad_output
                 P_csc, _, _, _, _, m, p, Gn, hn, An = pack_osqp(Pi, sign * qi, Gi, hi, Ai, bi)
-                z, yb, active = bpqp_backward(_np(xi), _np(yi), P_csc, Gn, hn, An, _np(gi), m, p, act_tol)
+                z, yb, active = bpqp_backward(_np(xi), _np(yi), P_csc, Gn, hn, An, _np(gi), m, p, act_tol, backward_eps)
                 zt = torch.from_numpy(z).to(device=Pi.device, dtype=Pi.dtype)
                 gq_i = sign * zt
                 gP_i = 0.5 * (torch.outer(zt, xi) + torch.outer(xi, zt))

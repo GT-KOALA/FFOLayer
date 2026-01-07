@@ -13,7 +13,7 @@ from models_sudoku import BLOSudokuLearnA, OptNetSudokuLearnA, SingleOptLayerSud
 from utils_sudoku import computeErr, create_logger, decode_onehot
 import logger as logger
 
-def train_test_loop(args, experiment_dir, step_experiment_dir, n):
+def train_test_loop(args, experiment_dir, step_experiment_dir, n, device):
     method = args.method
     seed = args.seed
     num_epochs = args.epochs
@@ -22,8 +22,6 @@ def train_test_loop(args, experiment_dir, step_experiment_dir, n):
     
     board_side_len = n**2
     
-    # device = torch.device('cpu') #torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    device = torch.device(args.device) if torch.cuda.is_available() else torch.device('cpu')
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
@@ -75,6 +73,7 @@ def train_test_loop(args, experiment_dir, step_experiment_dir, n):
     
     directory = experiment_dir
     time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+    
     filename = '{}_n{}_lr{}_seed{}_{time_str}.csv'.format(method, n, learning_rate, seed, time_str=time_str)
     # if os.path.exists(directory + filename):
     #     os.remove(directory + filename)
@@ -282,8 +281,14 @@ if __name__ == '__main__':
     parser.add_argument('--device', type=str, default='cuda:0', help='device')
     
     args = parser.parse_args()
-    
-    experiment_dir = '../sudoku_results_{}/{}/'.format(args.batch_size, args.method)
+    device = torch.device(args.device) if torch.cuda.is_available() else torch.device('cpu')
+
+    if device != torch.device('cpu'):
+        print(f"Using {device} for {args.method}")
+        experiment_dir = '../sudoku_results_{}/{}_gpu/'.format(args.batch_size, args.method)
+    else:
+        print(f"Using {device} for {args.method}")
+        experiment_dir = '../sudoku_results_{}/{}/'.format(args.batch_size, args.method)
     os.makedirs(experiment_dir, exist_ok=True)
     
     step_experiment_dir = '../sudoku_results_{}/{}/'.format(args.batch_size, f"{args.method}_steps")
@@ -295,7 +300,7 @@ if __name__ == '__main__':
     failure_id = '{}_n{}_lr{}_seed{}'.format(args.method, n, args.lr, args.seed)
     
     try:
-        train_test_loop(args, experiment_dir, step_experiment_dir, n=n)
+        train_test_loop(args, experiment_dir, step_experiment_dir, n=n, device=device)
     except Exception as e:
         central_logger.exception(f"{failure_id}: An error occurred: {e}")
         print(f"{failure_id}: An error occurred: {e}")

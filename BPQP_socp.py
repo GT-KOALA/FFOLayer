@@ -13,13 +13,13 @@ def _np(x: torch.Tensor) -> np.ndarray:
 def _sym(P: np.ndarray) -> np.ndarray:
     return 0.5 * (P + P.T)
 
-def osqp_solve(P_csc, q_np, A_csc, l_np, u_np):
+def osqp_solve(P_csc, q_np, A_csc, l_np, u_np, eps=1e-6):
     prob = osqp.OSQP()
     prob.setup(
         P_csc, q_np, A_csc, l_np, u_np,
         verbose=False,
-        eps_abs=1e-5, eps_rel=1e-5,
-        eps_prim_inf=1e-5, eps_dual_inf=1e-5
+        eps_abs=eps, eps_rel=eps,
+        eps_prim_inf=eps, eps_dual_inf=eps
     )
     res = prob.solve()
     if res.x is None:
@@ -35,7 +35,7 @@ def _soc_dual_scalar_u(dv):
     return float(arr[0])
 
 
-def cvxpy_solve_qp_lin_soc(P, q, G, h, A, b, soc_a, soc_b, sign=1, eps=1e-5, max_iters=200000):
+def cvxpy_solve_qp_lin_soc(P, q, G, h, A, b, soc_a, soc_b, sign=1, eps=1e-12, max_iters=2500):
     """
     Solve:
       minimize 0.5 x^T P x + sign*q^T x
@@ -120,7 +120,8 @@ def bpqp_backward_qp_lin_eq_soc(
     soc_a, soc_b,
     lam_lin, lam_soc_u,
     act_tol=1e-6,
-    reg=1e-8
+    reg=1e-8,
+    backward_eps=1e-10
 ):
     """
     Backward BPQP for QP + lin ineq + lin eq + SOC (a_i^T x + ||x|| <= b_i).
@@ -184,11 +185,11 @@ def bpqp_backward_qp_lin_eq_soc(
     Ab = sp.csc_matrix(np.vstack(rows).astype(np.float64))
     k = Ab.shape[0]
     P_csc = sp.csc_matrix(Pp)
-    z, yb = osqp_solve(P_csc, grad, Ab, np.zeros(k), np.zeros(k))
+    z, yb = osqp_solve(P_csc, grad, Ab, np.zeros(k), np.zeros(k), eps=backward_eps)
     return z, yb, active_lin, active_soc
 
 
-def BPQPLayer(sign=1, act_tol=1e-6):
+def BPQPLayer_socp(sign=1, act_tol=1e-6, forward_eps=1e-12, backward_eps=1e-10):
     class _Layer(Function):
         @staticmethod
         def forward(ctx, P, q, G, h, A, b, soc_a, soc_b):
@@ -209,7 +210,7 @@ def BPQPLayer(sign=1, act_tol=1e-6):
 
                 x_np, nu_np, lam_np, lam_soc_np = cvxpy_solve_qp_lin_soc(
                     Pi, qi, Gi, hi, Ai, bi, sai, sbi,
-                    sign=sign, eps=1e-5, max_iters=200000
+                    sign=sign, eps=forward_eps, max_iters=2500
                 )
 
                 xs.append(torch.from_numpy(x_np).to(device=Pi.device, dtype=Pi.dtype))
@@ -223,13 +224,13 @@ def BPQPLayer(sign=1, act_tol=1e-6):
             lam_soc = torch.stack(lams_soc, 0) if batched else lams_soc[0]
 
             ctx.save_for_backward(P, q, G, h, A, b, soc_a, soc_b, x, nu, lam, lam_soc)
-            ctx.meta = (batched, B, sign, act_tol)
+            ctx.meta = (batched, B, sign, act_tol, forward_eps, backward_eps)
             return x
 
         @staticmethod
         def backward(ctx, grad_output):
             P, q, G, h, A, b, soc_a, soc_b, x, nu, lam, lam_soc = ctx.saved_tensors
-            batched, B, sign, act_tol = ctx.meta
+            batched, B, sign, act_tol, forward_eps, backward_eps = ctx.meta
 
             gP = torch.zeros_like(P)
             gq = torch.zeros_like(q)
@@ -268,7 +269,9 @@ def BPQPLayer(sign=1, act_tol=1e-6):
                     soc_b=_np(sbi),
                     lam_lin=_np(lami),
                     lam_soc_u=_np(lam_soci),
-                    act_tol=act_tol
+                    act_tol=act_tol,
+                    reg=backward_eps,
+                    backward_eps=backward_eps
                 )
 
                 zt = torch.from_numpy(z).to(device=Pi.device, dtype=Pi.dtype)

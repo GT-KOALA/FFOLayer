@@ -461,8 +461,8 @@ class _BLOLayer(torch.nn.Module):
         self._solver_args_fwd = dict(solver_args)
 
         self._solver_args_bwd = dict(solver_args)
-        self._solver_args_bwd["warm_start"] = True
-        self._solver_args_bwd["max_iters"] = 100
+        self._solver_args_bwd["warm_start"] = False
+        self._solver_args_bwd["max_iters"] = 2500
         if "eps" in self._solver_args_bwd:
             self._solver_args_bwd["eps"] = float(self.backward_eps)
 
@@ -765,7 +765,7 @@ class _BLOLayerFn(torch.autograd.Function):
 
             try:
                 prob.solve(**mt._solver_args_bwd)
-            except Exception:
+            except Exception as e:
                 print(f"[backward] problem {i} perturbed solve failed: {e!r}")
                 try:
                     b["perturbed_problem"].solve(solver=cp.OSQP, eps_abs=1e-4, eps_rel=1e-4, warm_start=True, verbose=False)
