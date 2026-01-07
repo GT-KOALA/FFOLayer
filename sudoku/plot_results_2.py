@@ -250,5 +250,5 @@ if __name__=="__main__":
     plot_time_vs_epoch(df, time_names=['iter_forward_time', 'iter_backward_time'], iteration_name='iter', plot_path=BASE_DIR, plot_name_tag="sudoku_steps")
     plot_total_time_vs_method(df, time_names=['iter_forward_time', 'iter_backward_time'], plot_path=BASE_DIR, plot_name_tag="sudoku_steps")
 
-    plot_losse_vs_epoch(df, "train_loss", iteration_name='iter', plot_path=BASE_DIR, plot_name_tag="sudoku_steps", loss_range=(0.07, 0.1))
+    plot_losse_vs_epoch(df, "train_loss", iteration_name='iter', plot_path=BASE_DIR, plot_name_tag="sudoku_steps", loss_range=(0, 2.4))
     plot_losse_vs_epoch(df, "train_error", iteration_name='iter', plot_path=BASE_DIR, plot_name_tag="sudoku_steps")

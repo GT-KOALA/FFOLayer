@@ -74,7 +74,10 @@ if __name__ == '__main__':
 
 
     directory = '../synthetic_results_general_{}{}/{}/'.format(args.batch_size, args.suffix, method)
-    filename = '{}_ydim{}_lr{}_seed{}.csv'.format(method, ydim, learning_rate, seed)
+    if args.method == "ffocp_eq":
+        filename = '{}_ydim{}_lr{}_seed{}_backwardTol{}.csv'.format(method, ydim, learning_rate, seed, backward_eps)
+    else:
+        filename = '{}_ydim{}_lr{}_seed{}.csv'.format(method, ydim, learning_rate, seed)
     # if os.path.exists(directory + filename):
     #     os.remove(directory + filename)
 

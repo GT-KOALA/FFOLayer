@@ -99,7 +99,7 @@ if __name__ == '__main__':
     # if not os.path.exists(step_experiment_dir):
     os.makedirs(step_experiment_dir, exist_ok=True)
     with open(step_experiment_dir + filename, 'w') as step_file:
-        step_file.write('epoch, iter, train_df_loss, iter_forward_time, iter_backward_time, forward_solve_time, backward_solve_time, forward_setup_time, backward_setup_time, cosine_sim_val, l2_dist_val, l1_dist_val, l_inf_dist_val\n')
+        step_file.write('epoch, iter, train_df_loss, iter_forward_time, iter_backward_time, forward_solve_time, backward_solve_time, forward_setup_time, backward_setup_time, cosine_sim_val, l2_dist_val, l1_dist_val, l_inf_dist_val, grad_norm_val\n')
         step_file.flush()
         
         
@@ -188,16 +188,18 @@ if __name__ == '__main__':
                     l2_distance = torch.norm(grads_flat - grads_cvx_flat, p=2)
                     l1_distance = torch.norm(grads_flat - grads_cvx_flat, p=1)
                     l_inf_distance = torch.norm(grads_flat - grads_cvx_flat, p=float('inf'))
+                    grad_norm = torch.norm(grads_flat, p=2)
 
                     cosine_sim_val = cosine_similarity.item()
                     l2_dist_val = l2_distance.item()
                     l1_dist_val = l1_distance.item()
                     l_inf_dist_val = l_inf_distance.item()
+                    grad_norm_val = grad_norm.item()
 
-                    print(f"cosine similarity: {cosine_sim_val}")
-                    print(f"l2 distance: {l2_distance}")
-                    print(f"l1 distance: {l1_distance}")
-                    print(f"l_inf distance: {l_inf_distance}")
+                    # print(f"cosine similarity: {cosine_sim_val}")
+                    # print(f"l2 distance: {l2_distance}")
+                    # print(f"l1 distance: {l1_distance}")
+                    # print(f"l_inf distance: {l_inf_distance}")
                 
                 loss.backward()
                 backward_time_ = time.time() - start_time
@@ -233,7 +235,7 @@ if __name__ == '__main__':
                 
                 
                     with open(step_experiment_dir + filename, 'a') as step_file:
-                        step_file.write(f'{epoch},{i},{df_loss.item()},{forward_time_},{backward_time_},{forward_solve_time_},{backward_solve_time_},{forward_setup_time_},{backward_setup_time_},{cosine_sim_val},{l2_dist_val},{l1_dist_val},{l_inf_dist_val}\n')
+                        step_file.write(f'{epoch},{i},{df_loss.item()},{forward_time_},{backward_time_},{forward_solve_time_},{backward_solve_time_},{forward_setup_time_},{backward_setup_time_},{cosine_sim_val},{l2_dist_val},{l1_dist_val},{l_inf_dist_val},{grad_norm_val}\n')
                         step_file.flush()
                         
                     train_ts_loss_list.append(ts_loss.item())
