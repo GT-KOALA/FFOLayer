@@ -64,7 +64,7 @@ if __name__ == '__main__':
     # print(len(train_loader))
     # assert(len(train_loader)*batch_size == 1600)
 
-    model = OptModel(input_dim, ydim, layer_type=method, constraint_learnable=(args.learn_constraint==1), batch_size=batch_size, device=device, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, backward_eps=backward_eps, is_QP=True).to(device)
+    model = OptModel(input_dim, ydim, layer_type=method, constraint_learnable=(args.learn_constraint==1), batch_size=batch_size, device=device, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, backward_eps=backward_eps, is_QP=False).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0)
     loss_fn = torch.nn.MSELoss()
     
