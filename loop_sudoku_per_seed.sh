@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# seeds=($(seq 1 3))
-seeds=(1)
+# seeds=($(seq 1 1 5))
+seeds=($(seq 4 1 5))
 
 for seed in "${seeds[@]}"; do
     jobname="sudoku_seed${seed}"

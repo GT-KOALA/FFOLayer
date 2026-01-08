@@ -862,36 +862,28 @@ class _BLOLayerFn(torch.autograd.Function):
                     else:
                         new_scalar_dual_full_i.append(old_scalar_dual_t[j][i])
 
-                old_scalar_dual_full_i = [d[i] for d in old_scalar_dual_t]
                 new_exp_dual_i = [d[i] for d in new_exp_dual_t]
-                old_exp_dual_i = [d[i] for d in old_exp_dual_t]
                 new_psd_dual_i = [d[i] for d in new_psd_dual_t]
-                old_psd_dual_i = [d[i] for d in old_psd_dual_t]
 
                 phi_new = b["phi_torch"](*vars_new_i, *params_i)
                 phi_old = b["phi_torch"](*vars_old_i, *params_i)
 
                 eq_new = b["eq_dual_term_torch"](*vars_old_i, *params_i, *new_eq_dual_i)
-                eq_old = b["eq_dual_term_torch"](*vars_old_i, *params_i, *old_eq_dual_i)
 
                 ineq_new = b["ineq_dual_term_torch"](*vars_old_i, *params_i, *new_scalar_dual_full_i)
-                ineq_old = b["ineq_dual_term_torch"](*vars_old_i, *params_i, *old_scalar_dual_full_i)
 
                 if b["exp_dual_term_torch"] is not None:
                     exp_new = b["exp_dual_term_torch"](*vars_old_i, *params_i, *new_exp_dual_i)
-                    exp_old = b["exp_dual_term_torch"](*vars_old_i, *params_i, *old_exp_dual_i)
                 else:
                     exp_new = 0.0
-                    exp_old = 0.0
 
                 if b["psd_dual_term_torch"] is not None:
                     psd_new = b["psd_dual_term_torch"](*vars_old_i, *params_i, *new_psd_dual_i)
-                    psd_old = b["psd_dual_term_torch"](*vars_old_i, *params_i, *old_psd_dual_i)
                 else:
                     psd_new = 0.0
-                    psd_old = 0.0
 
-                loss = loss + (phi_new + ineq_new + eq_new + exp_new + psd_new - phi_old - ineq_old - eq_old - exp_old - psd_old)
+                # loss = loss + (phi_new + ineq_new + eq_new + exp_new + psd_new - phi_old - ineq_old - eq_old - exp_old - psd_old)
+                loss = loss + (phi_new + ineq_new + eq_new + exp_new + psd_new - phi_old)
 
             loss = mt.alpha * loss
 

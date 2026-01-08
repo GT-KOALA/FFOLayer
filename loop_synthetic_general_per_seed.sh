@@ -2,10 +2,10 @@
 
 
 # seeds=($(seq 1 5))
-seeds=(1)
+seeds=($(seq 1 1 5))
 
-# ydims=($(seq 200 100 1000))
-ydims=(900)
+ydims=($(seq 200 100 1000))
+# ydims=(900)
 
 batchSize=8
 

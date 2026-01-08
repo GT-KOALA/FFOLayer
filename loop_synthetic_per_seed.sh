@@ -1,10 +1,11 @@
 #!/bin/bash
 
 
-seeds=($(seq 1 10))   # ← ARRAY, not string
+# seeds=($(seq 2 1 5))
+seeds=(1)
 
-# ydims=($(seq 200 100 1000))
-ydims=(900)
+ydims=($(seq 200 100 1000))
+# ydims=(900)
 
 # backward_eps_list=    #($(seq 0.001 0.00001 0.00000001)) #0.001,0.00001,0.00000001, 0.000000000001
 backward_eps_list=($(python3 -c 'print(" ".join([str(x) for x in [0.001,0.00001,0.00000001, 0.000000000001]]))'))
