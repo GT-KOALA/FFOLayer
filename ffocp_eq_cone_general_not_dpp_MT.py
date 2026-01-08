@@ -1,5 +1,5 @@
 import os
-from copy import copy
+from copy import copy, deepcopy
 from concurrent.futures import ThreadPoolExecutor
 
 from contextlib import contextmanager
@@ -263,28 +263,23 @@ def _build_problem_bundle(
     else:
         psd_dual_term_torch = None
 
-    # precompute mapping for assembling "new_scalar_dual_full"
     non_pnorm_set = set(non_pnorm_scalar_ids)
     pnorm_set = set(pnorm_ineq_ids)
     pnorm_map = {j: lid for lid, j in enumerate(pnorm_ineq_ids)}
 
-    # scalar inequality shape helpers (used to speed up backward active-set selection)
     scalar_is_scalar = [int(np.prod(g.shape)) == 1 for g in scalar_ineq_funcs]
     scalar_scalar_indices = [j for j, f in enumerate(scalar_is_scalar) if f]
     scalar_nonscalar_indices = [j for j, f in enumerate(scalar_is_scalar) if not f]
 
     return dict(
-        # metadata
         alpha=float(alpha),
         dual_cutoff=float(dual_cutoff),
         slack_tol=float(slack_tol),
         eps=float(eps),
 
-        # templates
         param_order=param_order,
         variables=variables,
 
-        # objective/constraints
         objective=objective_expr,
         eq_functions=eq_funcs,
         scalar_ineq_functions=scalar_ineq_funcs,
@@ -337,21 +332,23 @@ def _build_problem_bundle(
 
 
 def BLOLayer(
-    problem_list,
-    parameters_list,
-    variables_list,
+    problem,
+    parameters,
+    variables,
+    batch_size: int | None = None,
     alpha: float = 100.0,
     dual_cutoff: float = 1e-3,
     slack_tol: float = 1e-8,
     eps: float = 1e-13,
-    compute_cos_sim: bool = False,   # kept for compatibility (not used in this minimal core)
+    compute_cos_sim: bool = False,
     max_workers: int | None = None,
     backward_eps: float = 1e-3,
 ):
     return _BLOLayer(
-        problem_list=problem_list,
-        parameters_list=parameters_list,
-        variables_list=variables_list,
+        problem_list=problem,
+        parameters_list=parameters,
+        variables_list=variables,
+        batch_size=batch_size,
         alpha=alpha,
         dual_cutoff=dual_cutoff,
         slack_tol=slack_tol,
@@ -372,6 +369,7 @@ class _BLOLayer(torch.nn.Module):
         problem_list,
         parameters_list,
         variables_list,
+        batch_size: int | None,
         alpha,
         dual_cutoff,
         slack_tol,
@@ -381,6 +379,51 @@ class _BLOLayer(torch.nn.Module):
         backward_eps,
     ):
         super().__init__()
+
+        if not isinstance(problem_list, (list, tuple)):
+            if batch_size is None:
+                raise ValueError(
+                    "BLOLayer: when passing a single problem (not a list/tuple), you must provide batch_size."
+                )
+            if int(batch_size) <= 0:
+                raise ValueError(f"BLOLayer: batch_size must be positive, got {batch_size}.")
+
+            if callable(problem_list):
+                prob_list = []
+                params_list = []
+                vars_list = []
+                for _ in range(int(batch_size)):
+                    out = problem_list()
+                    if not (isinstance(out, (list, tuple)) and len(out) == 3):
+                        raise ValueError(
+                            "BLOLayer: factory must return a 3-tuple (problem, parameters, variables)."
+                        )
+                    prob_i, params_i, vars_i = out
+                    prob_list.append(prob_i)
+                    params_list.append(params_i)
+                    vars_list.append(vars_i)
+                problem_list, parameters_list, variables_list = prob_list, params_list, vars_list
+            else:
+                tpl = (problem_list, parameters_list, variables_list)
+                prob_list = []
+                params_list = []
+                vars_list = []
+                for _ in range(int(batch_size)):
+                    try:
+                        prob_i, params_i, vars_i = deepcopy(tpl)
+                    except Exception as e:
+                        raise ValueError(
+                            "BLOLayer: failed to deepcopy (problem, parameters, variables). "
+                            "To ensure thread-safety, please either:\n"
+                            "  (1) pass explicit lists: problem_list / parameters_list / variables_list, or\n"
+                            "  (2) pass a factory: problem_list=lambda: (prob, params, vars)\n"
+                            f"Original error: {type(e).__name__}: {e}"
+                        ) from e
+                    prob_list.append(prob_i)
+                    params_list.append(params_i)
+                    vars_list.append(vars_i)
+                problem_list, parameters_list, variables_list = prob_list, params_list, vars_list
+
         if not (len(problem_list) == len(parameters_list) == len(variables_list)):
             raise ValueError("problem_list / parameters_list / variables_list must have the same length.")
         self.num_problems = len(problem_list)
@@ -817,15 +860,12 @@ class _BLOLayerFn(torch.autograd.Function):
         vars_old = [to_torch(ctx.sol_numpy[j], ctx.dtype, ctx.device) for j in range(num_vars)]
 
         new_eq_dual_t = [to_torch(v, ctx.dtype, ctx.device) for v in new_eq_dual]
-        old_eq_dual_t = [to_torch(v, ctx.dtype, ctx.device) for v in ctx.eq_dual]
 
         old_scalar_dual_t = [to_torch(v, ctx.dtype, ctx.device) for v in ctx.scalar_ineq_dual]
         new_active_dual_t = [to_torch(v, ctx.dtype, ctx.device) for v in new_active_dual]
 
         new_exp_dual_t = [to_torch(v, ctx.dtype, ctx.device) for v in new_exp_dual]
-        old_exp_dual_t = [to_torch(v, ctx.dtype, ctx.device) for v in ctx.exp_dual]
         new_psd_dual_t = [to_torch(v, ctx.dtype, ctx.device) for v in new_psd_dual]
-        old_psd_dual_t = [to_torch(v, ctx.dtype, ctx.device) for v in ctx.psd_dual]
 
         new_pnorm_lam_t = [to_torch(v, ctx.dtype, ctx.device) for v in new_pnorm_lam]
 
@@ -848,7 +888,6 @@ class _BLOLayerFn(torch.autograd.Function):
                 params_i = slice_params_for_batch(params_req, ctx.batch_sizes, i) if ctx.batch else params_req
 
                 new_eq_dual_i = [d[i] for d in new_eq_dual_t]
-                old_eq_dual_i = [d[i] for d in old_eq_dual_t]
 
                 new_scalar_dual_full_i = []
                 ptr = 0
@@ -882,7 +921,6 @@ class _BLOLayerFn(torch.autograd.Function):
                 else:
                     psd_new = 0.0
 
-                # loss = loss + (phi_new + ineq_new + eq_new + exp_new + psd_new - phi_old - ineq_old - eq_old - exp_old - psd_old)
                 loss = loss + (phi_new + ineq_new + eq_new + exp_new + psd_new - phi_old)
 
             loss = mt.alpha * loss

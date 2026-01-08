@@ -4,7 +4,8 @@ import numpy as np
 import torch
 import cvxpy as cp
 from cvxpylayers.torch import CvxpyLayer
-from ffocp_eq_cone_general_not_dpp_cvxtorch import BLOLayer
+from ffocp_eq_cone_general_not_dpp_MT import BLOLayer
+# from ffocp_eq_cone_general_not_dpp_cvxtorch import BLOLayer
 # from ffocp_eq_cone_general_not_dpp import BLOLayer
 
 torch.set_default_dtype(torch.double)
@@ -214,7 +215,7 @@ def test_blolayer_vs_cvxpy(seed=0):
     assert problem.is_dpp()
 
     cvx_layer = CvxpyLayer(problem, parameters=params_cp, variables=[x_cp])
-    blolayer = BLOLayer(problem, parameters=params_cp, variables=[x_cp])
+    blolayer = BLOLayer(problem, parameters=params_cp, variables=[x_cp], batch_size=1)
 
     repeat_times = 2
 
