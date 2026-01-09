@@ -9,7 +9,7 @@ description = "A fully first-order (FFO) layer for differentiable convex optimiz
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
-authors = [{name="Zihao Zhao"},
+authors = [{name = "Zihao Zhao"},
            {name = "Kai-Chia Mo"},
            {name = "Shing-Hei Ho"},
            {name = "Brandon Amos"},
@@ -17,9 +17,11 @@ authors = [{name="Zihao Zhao"},
 ]
 dependencies = [
   "numpy",
+  "scipy",
   "torch",
   "cvxpy",
-  "cvxtorch"
+  "cvxtorch",
+  "diffcp"
 ]
 keywords = ["first-order", "convex optimization", "differentiable optimization"]
 
@@ -35,7 +37,10 @@ allow-direct-references = true
 packages = ["src/ffolayer"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/src", "/baselines", "/synthetic_task", "/sudoku", "scripts", "/README.md", "/LICENSE"]
+include = ["/src", "tests", "/README.md", "/LICENSE"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.hatch.version]
 path = "src/cvxpylayers/__init__.py"

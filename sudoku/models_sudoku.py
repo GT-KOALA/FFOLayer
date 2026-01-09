@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.nn.parameter import Parameter
 import numpy as np
 
-from src.ffolayer.ffocp_eq import BLOLayer as BLOLayerMT
+from src.ffolayer.ffocp_eq import FFOLayer
 from src.ffolayer.ffoqp_eq import ffoqp as ffoqpLayer
 
 from dqp import dQP
@@ -164,7 +164,7 @@ class SingleOptLayerSudoku(nn.Module):
             problem, objective, ineq_functions, eq_functions, params, variables = setup_cvx_qp_problem(opt_var_dim=self.y_dim, num_ineq=self.num_ineq, num_eq=self.num_eq)
             
             if layer_type==FFOCP_EQ:
-                self.optlayer = BLOLayerMT(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-6, backward_eps=1e-5)
+                self.optlayer = FFOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-6, backward_eps=1e-5)
 
             elif layer_type==FFOQP_EQ or layer_type==FFOQP_EQ_SCHUR:
                 self.optlayer = ffoqpLayer(alpha=alpha, chunk_size=1, solver='qpsolvers')
@@ -362,7 +362,7 @@ class BLOSudokuLearnA(nn.Module):
         self.alpha = alpha
         
         problem, objective, ineq_functions, eq_functions, params, variables = setup_cvx_qp_problem(opt_var_dim=y_dim, num_ineq=num_ineq, num_eq=num_eq)
-        self.blolayer1 = BLOLayer(objective=objective, equality_functions=eq_functions, inequality_functions=ineq_functions, parameters=params, variables=variables, alpha=self.alpha)
+        self.blolayer1 = FFOLayer(problem, parameters=params, variables=variables, alpha=self.alpha)
         
         self.register_buffer("Q", Qpenalty * torch.eye(y_dim, dtype=torch.double))
         self.register_buffer("G", -torch.eye(num_ineq, dtype=torch.double))

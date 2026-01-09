@@ -8,7 +8,7 @@ import cvxpy as cp
 from constants import *
 from torch.nn.parameter import Parameter
 
-from src.ffolayer.ffocp_eq import BLOLayer as BLOLayerGeneralMT
+from src.ffolayer.ffocp_eq import FFOLayer
 import src.ffolayer.ffoqp_eq as ffoqp_eq_cst_schur
 
 from dqp import dQP
@@ -45,8 +45,7 @@ class MLP(nn.Module):
             x = self.activation(self.fc2(x))
         x = torch.clamp(self.fc3(x), min=-self.bound, max=self.bound)
         return x
-    
-    
+
 def setup_cvxpy_synthetic_problem(n, n_ineq_constraints, unconstrained=False):
     Q_cp = cp.Parameter((n, n), PSD=True)
     q_cp = cp.Parameter(n)
@@ -180,7 +179,7 @@ class OptModel(nn.Module):
                 problem, objective_fn, constraints, params, variables = setup_cvxpy_synthetic_problem(opt_dim, self.num_ineq)
         
                 if layer_type==FFOCP_EQ:
-                    self.optlayer = BLOLayerGeneralMT(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, backward_eps=backward_eps)
+                    self.optlayer = FFOLayerGeneralMT(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, backward_eps=backward_eps)
                         
                 elif layer_type==CVXPY_LAYER:
                     self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
@@ -202,7 +201,7 @@ class OptModel(nn.Module):
                         else:
                             # save for PSD or SOC constraints
                             raise NotImplementedError(
-                                f"Constraint type {type(c)} not supported in BLOLayer wrapper."
+                                f"Constraint type {type(c)} not supported in FFOLayer wrapper."
                             )
                     cvxpy_instance = {"variables":variables, "params":params, "problem":problem, "eq_constraints":[], "ineq_constraints":constraints,\
                         "eq_functions":eq_funcs, "ineq_functions":ineq_funcs}
@@ -248,7 +247,7 @@ class OptModel(nn.Module):
             cone_dim = opt_dim
             problem, objective_fn, constraints, params, variables = setup_cvxpy_synthetic_problem_with_cones(opt_dim, self.num_ineq, cone_dim)
             if layer_type==FFOCP_EQ:
-                self.optlayer = BLOLayerGeneralMT(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, backward_eps=backward_eps)
+                self.optlayer = FFOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, backward_eps=backward_eps)
             elif layer_type==CVXPY_LAYER:
                 self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
             elif layer_type==LPGD:

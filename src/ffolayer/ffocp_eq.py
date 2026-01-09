@@ -459,7 +459,7 @@ def _build_problem_bundle(
     )
 
 
-def BLOLayer(
+def FFOLayer(
     problem,
     parameters,
     variables,
@@ -471,7 +471,7 @@ def BLOLayer(
     max_workers: int | None = None,
     backward_eps: float = 1e-3,
 ):
-    return _BLOLayer(
+    return _FFOLayer(
         problem=problem,
         parameters=parameters,
         variables=variables,
@@ -485,7 +485,7 @@ def BLOLayer(
     )
 
 
-class _BLOLayer(torch.nn.Module):
+class _FFOLayer(torch.nn.Module):
     def __init__(
         self,
         problem,
@@ -534,7 +534,6 @@ class _BLOLayer(torch.nn.Module):
         self._solver_args_bwd = None
     
     def _infer_B_from_params(self, params):
-        """Infer batch size B from torch params using cvxpy template shapes."""
         ref_param_order = self._param_templates
         batch_sizes = []
         for i, (p, qtmpl) in enumerate(zip(params, ref_param_order)):
@@ -671,13 +670,13 @@ class _BLOLayer(torch.nn.Module):
         if "eps" in self._solver_args_bwd:
             self._solver_args_bwd["eps"] = float(self.backward_eps)
 
-        Fn = _make_blo_fn(self, solver_args)
+        Fn = _make_ffo_fn(self, solver_args)
 
         return Fn.apply(*params)
 
-def _make_blo_fn(mt: "_BLOLayer", solver_args: dict):
+def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
     solver_args = dict(solver_args)
-    class _BLOLayerFn(torch.autograd.Function):
+    class _FFOLayerFn(torch.autograd.Function):
         @staticmethod
         def forward(ctx, *params):
             ctx.mt = mt
@@ -1142,6 +1141,4 @@ def _make_blo_fn(mt: "_BLOLayer", solver_args: dict):
                 grads.append(next(it) if need else None)
 
             return tuple(grads)
-    return _BLOLayerFn
-
-FFOLayer = BLOLayer
+    return _FFOLayerFn

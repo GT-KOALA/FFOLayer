@@ -4,9 +4,9 @@ import numpy as np
 import torch
 import cvxpy as cp
 from cvxpylayers.torch import CvxpyLayer
-from src.ffolayer.ffocp_eq import BLOLayer
-# from ffocp_eq_cone_general_not_dpp_cvxtorch import BLOLayer
-# from ffocp_eq_cone_general_not_dpp import BLOLayer
+from src.ffolayer.ffocp_eq import FFOLayer
+# from ffocp_eq_cone_general_not_dpp_cvxtorch import FFOLayer
+# from ffocp_eq_cone_general_not_dpp import FFOLayer
 
 torch.set_default_dtype(torch.double)
 
@@ -211,7 +211,7 @@ def random_params_for_cone(
 
 
 # ============================================================
-# 3) Test: BLOLayer vs CvxpyLayer
+# 3) Test: FFOLayer vs CvxpyLayer
 # ============================================================
 def test_blolayer_vs_cvxpy(seed=0):
     torch.manual_seed(seed)
@@ -231,7 +231,7 @@ def test_blolayer_vs_cvxpy(seed=0):
     assert problem.is_dpp()
 
     cvx_layer = CvxpyLayer(problem, parameters=params_cp, variables=[x_cp])
-    blolayer = BLOLayer(problem, parameters=params_cp, variables=[x_cp], alpha=100.0, backward_eps=1e-12)
+    ffolayer = FFOLayer(problem, parameters=params_cp, variables=[x_cp], alpha=100.0, backward_eps=1e-12)
 
     repeat_times = 2
 
@@ -250,9 +250,9 @@ def test_blolayer_vs_cvxpy(seed=0):
 
         optimizer = torch.optim.SGD([q_param], lr=0.1)
 
-        # -------- BLOLayer --------
+        # -------- FFOLayer --------
         t0 = time.time()
-        sol_blo, = blolayer(*params_torch, solver_args=solver_args)
+        sol_blo, = ffolayer(*params_torch, solver_args=solver_args)
         t1 = time.time()
 
         loss_blo = sol_blo.sum()
@@ -290,8 +290,8 @@ def test_blolayer_vs_cvxpy(seed=0):
     print(f"cone_type = {cone_type}")
     print(f"CvxpyLayer forward times: {cvx_fw}, mean={np.mean(cvx_fw):.4f}")
     print(f"CvxpyLayer backward times: {cvx_bw}, mean={np.mean(cvx_bw):.4f}")
-    print(f"BLOLayer  forward times: {blo_fw}, mean={np.mean(blo_fw):.4f}")
-    print(f"BLOLayer  backward times: {blo_bw}, mean={np.mean(blo_bw):.4f}")
+    print(f"FFOLayer  forward times: {blo_fw}, mean={np.mean(blo_fw):.4f}")
+    print(f"FFOLayer  backward times: {blo_bw}, mean={np.mean(blo_bw):.4f}")
     print(f"cosine similarity: {cos_sims}")
     print(f"l2 diffs: {l2_diffs}")
 
