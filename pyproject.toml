@@ -21,12 +21,16 @@ dependencies = [
   "torch",
   "qpth",
   "cvxpy",
-  "cvxtorch @ git+https://github.com/cvxpy/cvxtorch.git",
   "diffcp",
   "threadpoolctl",
   "libdqp"
 ]
 keywords = ["first-order", "convex optimization", "differentiable optimization"]
+
+[project.optional-dependencies]
+cvxtorch = [
+  "cvxtorch @ git+https://github.com/cvxpy/cvxtorch.git"
+]
 
 [project.urls]
 Homepage = "https://github.com/GT-KOALA/FFOLayer"

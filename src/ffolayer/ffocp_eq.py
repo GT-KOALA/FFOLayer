@@ -16,7 +16,19 @@ def _limit_native_threads(n: int = 1):
 import cvxpy as cp
 import numpy as np
 import torch
-from cvxtorch import TorchExpression
+
+try:
+    from cvxtorch import TorchExpression
+except Exception:
+    TorchExpression = None
+
+def _require_cvxtorch():
+    if TorchExpression is None:
+        raise ImportError(
+            "cvxtorch is required for this feature. Install it with:\n"
+            "  pip install git+https://github.com/cvxpy/cvxtorch.git"
+        )
+
 from cvxpy.constraints.exponential import ExpCone
 from cvxpy.constraints.psd import PSD
 from cvxpy.constraints.second_order import SOC
@@ -462,6 +474,7 @@ def FFOLayer(
     max_workers: int | None = None,
     backward_eps: float = 1e-3,
 ):
+    _require_TorchExpression()
     return _FFOLayer(
         problem=problem,
         parameters=parameters,
