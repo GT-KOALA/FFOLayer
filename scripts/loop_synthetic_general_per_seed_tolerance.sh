@@ -1,5 +1,7 @@
 #!/bin/bash
 
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+cd "$SCRIPT_DIR/.."
 
 seeds=($(seq 1 5))
 # seeds=(1)
@@ -15,7 +17,7 @@ for ydim in "${ydims[@]}"; do
   for seed in "${seeds[@]}"; do
     for backward_eps in "${backward_eps_list[@]}"; do
       jobname="syn_y${ydim}_s${seed}_tol${backward_eps}_b${batchSize}"
-      sbatch --job-name="$jobname" synthetic_general_per_seed_tolerance.sbatch "$seed" "$ydim" "$batchSize" "$backward_eps"
+      sbatch --job-name="$jobname" scripts/synthetic_general_per_seed_tolerance.sbatch "$seed" "$ydim" "$batchSize" "$backward_eps"
       echo "Submitted: $jobname"
     done
   done
