@@ -1,23 +1,12 @@
 import torch
 import torch.nn as nn
 from torch.optim import Optimizer
-from torch import Tensor
-from torch.autograd import Function
-
 import numpy as np
-import scipy
 import time
 import cvxpy as cp
+import scipy.sparse as sp
 
 from .utils import forward_single_np_eq_cst, forward_batch_np, extract_nBatch, expandParam
-from enum import Enum
-
-from qpth.solvers.pdipm import batch as pdipm_b
-from qpth.solvers.pdipm.batch import KKTSolvers
-
-import scipy.sparse as sp
-import osqp
-from dqp import dQP
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.set_float32_matmul_precision("high")
@@ -268,6 +257,8 @@ def FFOQPLayer(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, ch
             ctx.neq, ctx.nineq, ctx.nz = neq, nineq, nz
 
             if nineq > 0 and solver == 'qpsolvers':
+                from dqp import dQP
+
                 dQP_settings = dQP.build_settings(
                         solve_type="dense",
                         qp_solver="gurobi",
@@ -298,6 +289,8 @@ def FFOQPLayer(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, ch
 
                 slacks = slacks.to(device=zhats.device, dtype=Q.dtype)            
             elif nineq > 0 and solver == 'PDIPM':
+                from qpth.solvers.pdipm import batch as pdipm_b
+
                 if cvxpy_instance is None:
                     ctx.Q_LU, ctx.S_LU, ctx.R = pdipm_b.pre_factor_kkt(Q, G, A)
                     zhats, nus, lams, slacks = pdipm_b.forward(
@@ -359,6 +352,8 @@ def FFOQPLayer(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, ch
                     
                     slacks = [torch.from_numpy(arr).to(device=device, dtype=dtype) for arr in ineq_slack_residual][0]
             elif nineq > 0 and solver == 'OSQP_NATIVE':
+                import osqp
+
                 device = Q.device
                 dtype = Q.dtype
                 zhats = torch.empty(nBatch, nz, device=device, dtype=dtype)
