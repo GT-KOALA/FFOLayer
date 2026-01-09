@@ -12,13 +12,13 @@ from ffocp_eq_cone_general_not_dpp_MT import BLOLayer as BLOLayerGeneralMT
 import ffoqp_eq_cst_schur
 
 from dqp import dQP
-from qpthlocal.qp import QPFunction
-from cvxpylayers_local.cvxpylayer import CvxpyLayer
-from cvxpylayers_local.cvxpylayer import CvxpyLayer as LPGDLayer
-from BPQP import BPQPLayer
-from BPQP_socp import BPQPLayer_socp
-from AltDiff import AltDiffLayer
-from AltDiff_socp import AltDiffLayer as AltDiffLayer_socp
+from baselines.qpthlocal.qp import QPFunction
+from baselines.cvxpylayers_local.cvxpylayer import CvxpyLayer
+from baselines.cvxpylayers_local.cvxpylayer import CvxpyLayer as LPGDLayer
+from baselines.BPQP import BPQPLayer
+from baselines.BPQP_socp import BPQPLayer_socp
+from baselines.AltDiff import AltDiffLayer
+from baselines.AltDiff_socp import AltDiffLayer as AltDiffLayer_socp
 
 
 class MLP(nn.Module):

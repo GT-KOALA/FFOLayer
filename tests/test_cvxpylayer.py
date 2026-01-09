@@ -16,7 +16,7 @@ torch = pytest.importorskip("torch")
 
 from torch.autograd import grad  # noqa: E402
 
-from cvxpylayers_local.cvxpylayer import CvxpyLayer  # noqa: E402
+from baselines.cvxpylayers_local.cvxpylayer import CvxpyLayer  # noqa: E402
 
 import os as _os
 import json as _json

@@ -11,8 +11,8 @@ import cvxpy as cp
 from utils import forward_single_np_eq_cst, forward_batch_np, extract_nBatch, expandParam
 from enum import Enum
 
-from qpthlocal.solvers.pdipm import batch as pdipm_b
-from qpthlocal.solvers.pdipm.batch import KKTSolvers
+from baselines.qpthlocal.solvers.pdipm import batch as pdipm_b
+from baselines.qpthlocal.solvers.pdipm.batch import KKTSolvers
 
 import scipy.sparse as sp
 import osqp

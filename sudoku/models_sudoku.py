@@ -1,23 +1,21 @@
-import torch
-import torch.nn as nn
-from torch.nn.parameter import Parameter
-import numpy as np
-import math
 import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import cvxpy as cp
-from BPQP import BPQPLayer
-from dqp import dQP
-from AltDiff import AltDiffLayer
+import torch
+import torch.nn as nn
+from torch.nn.parameter import Parameter
+import numpy as np
 
 from ffocp_eq_cone_general_not_dpp_MT import BLOLayer as BLOLayerMT
 from ffoqp_eq_cst_schur import ffoqp as ffoqpLayer
 
-from qpthlocal.qp import QPFunction
-from cvxpylayers_local.cvxpylayer import CvxpyLayer
+from dqp import dQP
+from baselines.BPQP import BPQPLayer
+from baselines.AltDiff import AltDiffLayer
+from baselines.qpthlocal.qp import QPFunction
+from baselines.cvxpylayers_local.cvxpylayer import CvxpyLayer
 
 from utils_sudoku import setup_cvx_qp_problem, get_sudoku_matrix
 from constants import FFOCP_EQ, QPTH, LPGD, CVXPY_LAYER, FFOQP_EQ, LPGD_QP, BPQP, DQP, FFOQP_EQ_SCHUR, ALTDIFF
@@ -241,7 +239,6 @@ class SingleOptLayerSudoku(nn.Module):
             params_batched = [Q_batched, p, G_batched, h_batched, A_batched, b_batched]
             
             if self.layer_type==LPGD:
-                # ZIHAO CHANGE: set eps to 1e-12
                 sol, = self.optlayer(*params_batched, solver_args={"eps": 1e-12}) #, solver_args={"eps": 1e-8, "max_iters": 10000, "acceleration_lookback": 0}
                 # sol, = self.optlayer(*params_batched)
             elif self.layer_type==ALTDIFF:
