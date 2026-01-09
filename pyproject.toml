@@ -21,7 +21,7 @@ dependencies = [
   "torch",
   "qpth",
   "cvxpy",
-  "cvxtorch",
+  "cvxtorch @ git+https://github.com/cvxpy/cvxtorch.git",
   "diffcp",
   "threadpoolctl"
 ]
