@@ -12,9 +12,9 @@ import cvxpy
 # from qpthlocal.solvers.pdipm import batch as pdipm_b
 # from qpthlocal.solvers.pdipm import spbatch as pdipm_spb
 # from qpthlocal.solvers.cvxpy import forward_single_np
-from utils import forward_single_np
+from .utils import forward_single_np
 from enum import Enum
-from utils import extract_nBatch, expandParam
+from .utils import extract_nBatch, expandParam
 from typing import cast, List, Optional, Union
 
 # from cvxpylayers.torch import CvxpyLayer

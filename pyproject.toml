@@ -35,6 +35,7 @@ allow-direct-references = true
 packages = ["src/ffolayer"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/src", "/baselines", "/synthetic_task", "/sudoku", "/README.md", "/LICENSE"]
+include = ["/src", "/baselines", "/synthetic_task", "/sudoku", "scripts", "/README.md", "/LICENSE"]
 
-
+[tool.hatch.version]
+path = "src/cvxpylayers/__init__.py"

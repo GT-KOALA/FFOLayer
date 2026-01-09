@@ -25,12 +25,12 @@ from cvxpy.constraints.second_order import SOC
 import sys
 from pathlib import Path
 
-# Add FFOLayer root to path for imports
+# Add FFOLayer root to path for imports (for baselines, dqp, etc.)
 _FFOLAYER_ROOT = Path(__file__).resolve().parents[2]
 if str(_FFOLAYER_ROOT) not in sys.path:
     sys.path.insert(0, str(_FFOLAYER_ROOT))
 
-from utils import to_numpy, to_torch, slice_params_for_batch
+from .utils import to_numpy, to_torch, slice_params_for_batch
 
 
 @torch.no_grad()

@@ -11,12 +11,12 @@ import cvxpy as cp
 import sys
 from pathlib import Path
 
-# Add FFOLayer root to path for imports
+# Add FFOLayer root to path for imports (for baselines, dqp, etc.)
 _FFOLAYER_ROOT = Path(__file__).resolve().parents[2]
 if str(_FFOLAYER_ROOT) not in sys.path:
     sys.path.insert(0, str(_FFOLAYER_ROOT))
 
-from utils import forward_single_np_eq_cst, forward_batch_np, extract_nBatch, expandParam
+from .utils import forward_single_np_eq_cst, forward_batch_np, extract_nBatch, expandParam
 from enum import Enum
 
 from baselines.qpthlocal.solvers.pdipm import batch as pdipm_b
