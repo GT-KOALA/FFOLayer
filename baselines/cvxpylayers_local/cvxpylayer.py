@@ -3,7 +3,7 @@ import cvxpy as cp
 from cvxpy.reductions.solvers.conic_solvers.scs_conif import \
     dims_to_solver_dict
 import numpy as np
-from cvxpylayers_local.utils import \
+from .utils import \
     ForwardContext, BackwardContext, forward_numpy, backward_numpy
 
 try:

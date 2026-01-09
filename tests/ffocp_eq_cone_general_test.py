@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import cvxpy as cp
 from cvxpylayers.torch import CvxpyLayer
-from ffocp_eq_cone_general_not_dpp_MT import BLOLayer
+from src.ffolayer.ffocp_eq import BLOLayer
 # from ffocp_eq_cone_general_not_dpp_cvxtorch import BLOLayer
 # from ffocp_eq_cone_general_not_dpp import BLOLayer
 

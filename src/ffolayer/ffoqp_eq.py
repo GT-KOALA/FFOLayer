@@ -8,6 +8,14 @@ import numpy as np
 import scipy
 import time
 import cvxpy as cp
+import sys
+from pathlib import Path
+
+# Add FFOLayer root to path for imports
+_FFOLAYER_ROOT = Path(__file__).resolve().parents[2]
+if str(_FFOLAYER_ROOT) not in sys.path:
+    sys.path.insert(0, str(_FFOLAYER_ROOT))
+
 from utils import forward_single_np_eq_cst, forward_batch_np, extract_nBatch, expandParam
 from enum import Enum
 
@@ -530,7 +538,6 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
                 G_grad = G_torch.grad.detach()
                 h_grad = h_torch.grad.detach()
                 if neq > 0:
-                    # Somehow this is not working now...
                     A_grad = A_torch.grad.detach()
                     b_grad = b_torch.grad.detach()
                     # A_grad = torch.zeros_like(A)
@@ -543,6 +550,3 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
 
     return QPFunctionFn.apply
 
-def to_numpy(x):
-    # convert torch tensor to numpy array
-    return x.cpu().detach().double().numpy()

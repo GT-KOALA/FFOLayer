@@ -26,7 +26,7 @@ import inspect as _inspect
 import torch as _torch
 from cvxpylayers.torch import CvxpyLayer as _CvxpyLayerRef
 
-_FFO_MOD = _os.environ.get("FFO_MOD", "ffocp_eq_cone_general_not_dpp_MT")
+_FFO_MOD = _os.environ.get("FFO_MOD", "src.ffolayer.ffocp_eq")
 _FFO_ENTRY = _os.environ.get("FFO_ENTRY", "BLOLayer")
 
 _FFO_SOL_ATOL = float(_os.environ.get("FFO_SOL_ATOL", "1e-5"))

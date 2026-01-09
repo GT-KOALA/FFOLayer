@@ -8,8 +8,8 @@ import cvxpy as cp
 from constants import *
 from torch.nn.parameter import Parameter
 
-from ffocp_eq_cone_general_not_dpp_MT import BLOLayer as BLOLayerGeneralMT
-import ffoqp_eq_cst_schur
+from src.ffolayer.ffocp_eq import BLOLayer as BLOLayerGeneralMT
+import src.ffolayer.ffoqp_eq as ffoqp_eq_cst_schur
 
 from dqp import dQP
 from baselines.qpthlocal.qp import QPFunction
