@@ -178,8 +178,6 @@ class SingleOptLayerSudoku(nn.Module):
                 self.optlayer = QPFunction(verbose=-1)
             elif self.layer_type==ALTDIFF:
                 self.optlayer = AltDiffLayer()
-            elif self.layer_type==LPGD_QP:
-                self.optlayer = lpgd_ffoqp(alpha=alpha)
             elif self.layer_type==BPQP:
                 self.optlayer = BPQPLayer()
             elif self.layer_type==DQP:
