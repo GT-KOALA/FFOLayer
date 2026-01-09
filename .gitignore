@@ -14,3 +14,4 @@ output/*
 *logs*
 *cvxpy_logs*
 *.sbatch
+*disk*
