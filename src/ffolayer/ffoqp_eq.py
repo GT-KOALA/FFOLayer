@@ -34,6 +34,7 @@ def _bpqp_sym(P):
     return 0.5 * (P + P.T)
 
 def _bpqp_osqp_solve(P_csc, q_np, A_csc, l_np, u_np):
+    import osqp
     prob = osqp.OSQP()
     prob.setup(P_csc, q_np, A_csc, l_np, u_np,
                verbose=False,
