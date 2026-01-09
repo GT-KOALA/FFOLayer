@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ffolayer"
-version = "0.1.0"
+version = "0.1.0a"
 description = "A fully first-order (FFO) layer for differentiable convex optimization"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -19,9 +19,11 @@ dependencies = [
   "numpy",
   "scipy",
   "torch",
+  "qpth",
   "cvxpy",
   "cvxtorch",
-  "diffcp"
+  "diffcp",
+  "threadpoolctl"
 ]
 keywords = ["first-order", "convex optimization", "differentiable optimization"]
 
@@ -43,4 +45,4 @@ include = ["/src", "tests", "/README.md", "/LICENSE"]
 testpaths = ["tests"]
 
 [tool.hatch.version]
-path = "src/cvxpylayers/__init__.py"
+path = "src/ffolayer/__init__.py"

@@ -9,7 +9,7 @@ from constants import *
 from torch.nn.parameter import Parameter
 
 from src.ffolayer.ffocp_eq import FFOLayer
-import src.ffolayer.ffoqp_eq as ffoqp_eq_cst_schur
+from src.ffolayer.ffoqp_eq import FFOQPLayer
 
 from dqp import dQP
 from baselines.qpthlocal.qp import QPFunction
@@ -206,8 +206,8 @@ class OptModel(nn.Module):
                     cvxpy_instance = {"variables":variables, "params":params, "problem":problem, "eq_constraints":[], "ineq_constraints":constraints,\
                         "eq_functions":eq_funcs, "ineq_functions":ineq_funcs}
             
-                    # self.optlayer = ffoqp_eq_cst_schur.ffoqp(alpha=alpha, chunk_size=1, cvxpy_instance=cvxpy_instance)
-                    self.optlayer = ffoqp_eq_cst_schur.ffoqp(alpha=alpha, chunk_size=1, cvxpy_instance=cvxpy_instance, solver='qpsolvers')
+                    # self.optlayer = ffoqp_eq_cst_schur.FFOQPLayer(alpha=alpha, chunk_size=1, cvxpy_instance=cvxpy_instance)
+                    self.optlayer = FFOQPLayer(alpha=alpha, chunk_size=1, cvxpy_instance=cvxpy_instance, solver='qpsolvers')
                     
             else:
                 if self.layer_type==QPTH:

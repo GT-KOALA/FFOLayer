@@ -8,19 +8,12 @@ import numpy as np
 import scipy
 import time
 import cvxpy as cp
-import sys
-from pathlib import Path
-
-# Add FFOLayer root to path for imports (for baselines, dqp, etc.)
-_FFOLAYER_ROOT = Path(__file__).resolve().parents[2]
-if str(_FFOLAYER_ROOT) not in sys.path:
-    sys.path.insert(0, str(_FFOLAYER_ROOT))
 
 from .utils import forward_single_np_eq_cst, forward_batch_np, extract_nBatch, expandParam
 from enum import Enum
 
-from baselines.qpthlocal.solvers.pdipm import batch as pdipm_b
-from baselines.qpthlocal.solvers.pdipm.batch import KKTSolvers
+from qpth.solvers.pdipm import batch as pdipm_b
+from qpth.solvers.pdipm.batch import KKTSolvers
 
 import scipy.sparse as sp
 import osqp
@@ -240,14 +233,9 @@ def kkt_schur_fast(Q, A, delta, L_cached=None, eps_q=1e-8, eps_s=1e-10,
 
     return dz, dlam
 
-def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=False, chunk_size=100,
+def FFOQPLayer(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q_spd=False, chunk_size=100,
           solver='qpsolvers', solver_opts={"verbose": False},
           exact_bwd_sol=True, slack_cutoff=1e-8, cvxpy_instance=None):
-    """ -> kamo
-    change lamb to alpha to prevent confusion
-    try solver GUROBI
-    """
-
     class QPFunctionFn(torch.autograd.Function):
         @staticmethod
         @torch.no_grad()
@@ -471,7 +459,6 @@ def ffoqp(eps=1e-12, verbose=0, notImprovedLim=3, maxIter=20, alpha=100, check_Q
             delta_directions = grad_output.unsqueeze(-1)
             zhats = zhats.unsqueeze(-1).detach()
 
-            # this is a hack by kamo
             start_time = time.time()
             # active_constraints = (lams > dual_cutoff).unsqueeze(-1).float()
             active_constraints = (slacks <= slack_cutoff).unsqueeze(-1).to(Q.dtype)

@@ -9,7 +9,7 @@ from torch.nn.parameter import Parameter
 import numpy as np
 
 from src.ffolayer.ffocp_eq import FFOLayer
-from src.ffolayer.ffoqp_eq import ffoqp as ffoqpLayer
+from src.ffolayer.ffoqp_eq import FFOQPLayer
 
 from dqp import dQP
 from baselines.BPQP import BPQPLayer
@@ -167,7 +167,7 @@ class SingleOptLayerSudoku(nn.Module):
                 self.optlayer = FFOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-6, backward_eps=1e-5)
 
             elif layer_type==FFOQP_EQ or layer_type==FFOQP_EQ_SCHUR:
-                self.optlayer = ffoqpLayer(alpha=alpha, chunk_size=1, solver='qpsolvers')
+                self.optlayer = FFOQPLayer(alpha=alpha, chunk_size=1, solver='qpsolvers')
             elif layer_type==CVXPY_LAYER:
                 self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
             elif layer_type==LPGD:
