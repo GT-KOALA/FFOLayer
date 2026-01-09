@@ -8,10 +8,8 @@ import numpy as np
 import scipy
 import time
 import cvxpy as cp
-from utils import forward_single_np_eq_cst, forward_batch_np
+from utils import forward_single_np_eq_cst, forward_batch_np, extract_nBatch, expandParam
 from enum import Enum
-from utils import extract_nBatch, expandParam
-from typing import cast, List, Optional, Union
 
 from qpthlocal.solvers.pdipm import batch as pdipm_b
 from qpthlocal.solvers.pdipm.batch import KKTSolvers
@@ -19,7 +17,6 @@ from qpthlocal.solvers.pdipm.batch import KKTSolvers
 import scipy.sparse as sp
 import osqp
 from dqp import dQP
-import qpsolvers
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.set_float32_matmul_precision("high")

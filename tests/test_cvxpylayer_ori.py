@@ -9,7 +9,7 @@ torch = pytest.importorskip("torch")
 
 from torch.autograd import grad  # noqa: E402
 
-from cvxpylayers.torch import CvxpyLayer  # noqa: E402
+from cvxpylayers_local.cvxpylayer import CvxpyLayer
 
 torch.set_default_dtype(torch.double)
 
