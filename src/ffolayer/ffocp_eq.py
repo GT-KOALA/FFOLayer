@@ -474,7 +474,7 @@ def FFOLayer(
     max_workers: int = 1,
     backward_eps: float = 1e-3,
 ):
-    _require_TorchExpression()
+    _require_cvxtorch()
     return _FFOLayer(
         problem=problem,
         parameters=parameters,
