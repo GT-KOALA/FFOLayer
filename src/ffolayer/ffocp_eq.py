@@ -203,7 +203,7 @@ def _active_counts_one(b, ctx, i: int, tol: float):
     out["total"] = out["eq"] + out["ineq"] + out["cone_total"]
     return out
 
-def active_counts_dict(ctx, tol: float | None = None, reduce: str = "sum"):
+def active_counts_dict(ctx, tol, reduce: str = "sum"):
     tol = float(ctx.mt.slack_tol if tol is None else tol)
     per_batch = [_active_counts_one(ctx.bundles[i], ctx, i, tol) for i in range(ctx.batch_size)]
     if reduce is None:
@@ -471,7 +471,7 @@ def FFOLayer(
     slack_tol: float = 1e-8,
     eps: float = 1e-13,
     compute_cos_sim: bool = False,
-    max_workers: int | None = None,
+    max_workers: int = 1,
     backward_eps: float = 1e-3,
 ):
     _require_TorchExpression()
@@ -501,7 +501,7 @@ class _FFOLayer(torch.nn.Module):
         eps,
         backward_eps,
         compute_cos_sim,
-        max_workers: int | None,
+        max_workers: int = 1,
     ):
         super().__init__()
 
