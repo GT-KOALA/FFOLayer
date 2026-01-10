@@ -1,31 +1,21 @@
-import torch
-import torch.nn as nn
-from torch.nn.parameter import Parameter
-import numpy as np
-import math
 import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import cvxpy as cp
-from BPQP import BPQPLayer
+import torch
+import torch.nn as nn
+from torch.nn.parameter import Parameter
+import numpy as np
+
+from src.ffolayer.ffocp_eq import FFOLayer
+from src.ffolayer.ffoqp_eq import FFOQPLayer
+
 from dqp import dQP
-from AltDiff import AltDiffLayer
-
-from ffocp_eq import BLOLayer
-# from ffocp_eq_multithread_wo_list import BLOLayer as BLOLayerMT
-# from ffocp_eq_multithread_ghost import BLOLayer as BLOLayerMT
-from ffocp_eq_cone_general_not_dpp_MT import BLOLayer as BLOLayerMT
-# from ffoqp_eq_cst import ffoqp as ffoqpLayer
-from ffoqp_eq_cst_schur import ffoqp as ffoqpLayer
-# from ffoqp_eq_cst_pdipm import ffoqp as ffoqpLayer
-from qpthlocal.qp import QPFunction
-# from cvxpylayers.torch import CvxpyLayer
-from cvxpylayers_local.cvxpylayer import CvxpyLayer
-# from cvxpylayers_local.cvxpylayer import CvxpyLayer as LPGDLayer
-from ffoqp_lpgd import ffoqp as lpgd_ffoqp
-
+from baselines.BPQP import BPQPLayer
+from baselines.AltDiff import AltDiffLayer
+from baselines.qpthlocal.qp import QPFunction
+from baselines.cvxpylayers_local.cvxpylayer import CvxpyLayer
 
 from utils_sudoku import setup_cvx_qp_problem, get_sudoku_matrix
 from constants import FFOCP_EQ, QPTH, LPGD, CVXPY_LAYER, FFOQP_EQ, LPGD_QP, BPQP, DQP, FFOQP_EQ_SCHUR, ALTDIFF
@@ -145,7 +135,7 @@ class SingleOptLayerSudoku(nn.Module):
                 self.z0_a = Parameter(init_learnable_vals["z0_a"])
             else:
                 self.A = Parameter(torch.rand((self.num_eq, self.y_dim)).double())
-                # ZIHAO CHANGE: initialize z0_a to 0
+
                 self.z0_a = Parameter(torch.zeros((self.y_dim,)).double())
         else:
             raise Exception("must be equality learnable")
@@ -169,35 +159,15 @@ class SingleOptLayerSudoku(nn.Module):
             for name in ["G", "h"]:
                 self.register_buffer(name, param_vals[name])
                 
-        
-        
-        ######## set up optimization layer
+
         if self.layer_type not in [QPTH, LPGD_QP, BPQP, DQP, ALTDIFF]:
             problem, objective, ineq_functions, eq_functions, params, variables = setup_cvx_qp_problem(opt_var_dim=self.y_dim, num_ineq=self.num_ineq, num_eq=self.num_eq)
             
-            multithread = True
             if layer_type==FFOCP_EQ:
-                if not multithread:
-                    # self.optlayer = BLOLayer(objective=objective, equality_functions=eq_functions, inequality_functions=ineq_functions, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol)
-                    self.optlayer = BLOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol)
-                else:
-                    problem_list = []
-                    ineq_functions_list = []
-                    eq_functions_list = []
-                    params_list = []
-                    variables_list = []
-                    for i in range(batch_size):
-                        problem, objective, ineq_functions, eq_functions, params, variables = setup_cvx_qp_problem(opt_var_dim=self.y_dim, num_ineq=self.num_ineq, num_eq=self.num_eq)
-                        problem_list.append(problem)
-                        ineq_functions_list.append(ineq_functions)
-                        eq_functions_list.append(eq_functions)
-                        params_list.append(params)
-                        variables_list.append(variables)
-                    
-                    self.optlayer = BLOLayerMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-6, backward_eps=1e-5)
-                    # self.optlayer = BLOLayerMT(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol)    
+                self.optlayer = FFOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-6, backward_eps=1e-5)
+
             elif layer_type==FFOQP_EQ or layer_type==FFOQP_EQ_SCHUR:
-                self.optlayer = ffoqpLayer(alpha=alpha, chunk_size=1, solver='qpsolvers')
+                self.optlayer = FFOQPLayer(alpha=alpha, chunk_size=1, solver='qpsolvers')
             elif layer_type==CVXPY_LAYER:
                 self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
             elif layer_type==LPGD:
@@ -208,8 +178,6 @@ class SingleOptLayerSudoku(nn.Module):
                 self.optlayer = QPFunction(verbose=-1)
             elif self.layer_type==ALTDIFF:
                 self.optlayer = AltDiffLayer()
-            elif self.layer_type==LPGD_QP:
-                self.optlayer = lpgd_ffoqp(alpha=alpha)
             elif self.layer_type==BPQP:
                 self.optlayer = BPQPLayer()
             elif self.layer_type==DQP:
@@ -269,7 +237,6 @@ class SingleOptLayerSudoku(nn.Module):
             params_batched = [Q_batched, p, G_batched, h_batched, A_batched, b_batched]
             
             if self.layer_type==LPGD:
-                # ZIHAO CHANGE: set eps to 1e-12
                 sol, = self.optlayer(*params_batched, solver_args={"eps": 1e-12}) #, solver_args={"eps": 1e-8, "max_iters": 10000, "acceleration_lookback": 0}
                 # sol, = self.optlayer(*params_batched)
             elif self.layer_type==ALTDIFF:
@@ -393,7 +360,7 @@ class BLOSudokuLearnA(nn.Module):
         self.alpha = alpha
         
         problem, objective, ineq_functions, eq_functions, params, variables = setup_cvx_qp_problem(opt_var_dim=y_dim, num_ineq=num_ineq, num_eq=num_eq)
-        self.blolayer1 = BLOLayer(objective=objective, equality_functions=eq_functions, inequality_functions=ineq_functions, parameters=params, variables=variables, alpha=self.alpha)
+        self.blolayer1 = FFOLayer(problem, parameters=params, variables=variables, alpha=self.alpha)
         
         self.register_buffer("Q", Qpenalty * torch.eye(y_dim, dtype=torch.double))
         self.register_buffer("G", -torch.eye(num_ineq, dtype=torch.double))

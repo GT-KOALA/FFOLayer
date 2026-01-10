@@ -1,35 +1,24 @@
-import torch
-import torch.nn as nn
-import cvxpy as cp
-from constants import *
-
-from torch.nn.parameter import Parameter
-
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import torch
+import torch.nn as nn
+import cvxpy as cp
+from constants import *
+from torch.nn.parameter import Parameter
+
+from src.ffolayer.ffocp_eq import FFOLayer
+from src.ffolayer.ffoqp_eq import FFOQPLayer
+
 from dqp import dQP
-from ffocp_eq_timing import BLOLayer
-# from ffocp_eq_multithread import BLOLayer as BLOLayerMT
-from ffocp_eq_multithread_ghost import BLOLayer as BLOLayerMT
-from ffocp_eq_cone_general_not_dpp import BLOLayer as BLOLayerGeneral
-from ffocp_eq_cone_general_not_dpp_MT import BLOLayer as BLOLayerGeneralMT
-
-from qpthlocal.qp import QPFunction
-# from cvxpylayers.torch import CvxpyLayer
-from cvxpylayers_local.cvxpylayer import CvxpyLayer
-from cvxpylayers_local.cvxpylayer import CvxpyLayer as LPGDLayer
-
-from BPQP import BPQPLayer
-from BPQP_socp import BPQPLayer_socp
-from AltDiff import AltDiffLayer
-from AltDiff_socp import AltDiffLayer as AltDiffLayer_socp
-
-import ffoqp_eq_cst
-import ffoqp_eq_cst_schur
-import ffoqp_eq_cst_parallelize
-import ffoqp_eq_cst_pdipm
+from baselines.qpthlocal.qp import QPFunction
+from baselines.cvxpylayers_local.cvxpylayer import CvxpyLayer
+from baselines.cvxpylayers_local.cvxpylayer import CvxpyLayer as LPGDLayer
+from baselines.BPQP import BPQPLayer
+from baselines.BPQP_socp import BPQPLayer_socp
+from baselines.AltDiff import AltDiffLayer
+from baselines.AltDiff_socp import AltDiffLayer as AltDiffLayer_socp
 
 
 class MLP(nn.Module):
@@ -56,8 +45,7 @@ class MLP(nn.Module):
             x = self.activation(self.fc2(x))
         x = torch.clamp(self.fc3(x), min=-self.bound, max=self.bound)
         return x
-    
-    
+
 def setup_cvxpy_synthetic_problem(n, n_ineq_constraints, unconstrained=False):
     Q_cp = cp.Parameter((n, n), PSD=True)
     q_cp = cp.Parameter(n)
@@ -190,32 +178,14 @@ class OptModel(nn.Module):
             if self.layer_type not in [QPTH, LPGD_QP, BPQP, ALTDIFF, DQP]:
                 problem, objective_fn, constraints, params, variables = setup_cvxpy_synthetic_problem(opt_dim, self.num_ineq)
         
-                multithread = True
                 if layer_type==FFOCP_EQ:
-                    if not multithread:
-                        self.optlayer = BLOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, solver_name="SCS")
-                    else:
-                        problem_list = []
-                        params_list = []
-                        variables_list = []
-                        for i in range(batch_size):
-                            problem, objective_fn, constraints, params, variables = setup_cvxpy_synthetic_problem(opt_dim, self.num_ineq)
-                            problem_list.append(problem)
-                            params_list.append(params)
-                            variables_list.append(variables)
-                        
-                        # self.optlayer = BLOLayerMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12)
-                        self.optlayer = BLOLayerGeneralMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, backward_eps=backward_eps)
+                    self.optlayer = FFOLayerGeneralMT(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, backward_eps=backward_eps)
                         
                 elif layer_type==CVXPY_LAYER:
                     self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
                 elif layer_type==LPGD:
                     self.optlayer = LPGDLayer(problem, parameters=params, variables=variables, lpgd=True)
                 
-                elif layer_type==FFOQP_EQ:
-                    self.optlayer = ffoqp_eq_cst.ffoqp(alpha=alpha, chunk_size=1)
-                elif layer_type == FFOQP_EQ_PDIPM:
-                    self.optlayer = ffoqp_eq_cst_pdipm.ffoqp(alpha=alpha)
                 elif layer_type == FFOQP_EQ_SCHUR: ## use this ffoqp_cst
                     problem, objective_fn, constraints, params, variables = setup_cvxpy_synthetic_problem(opt_dim, self.num_ineq)
                     eq_funcs, ineq_funcs = [], []
@@ -231,16 +201,14 @@ class OptModel(nn.Module):
                         else:
                             # save for PSD or SOC constraints
                             raise NotImplementedError(
-                                f"Constraint type {type(c)} not supported in BLOLayer wrapper."
+                                f"Constraint type {type(c)} not supported in FFOLayer wrapper."
                             )
                     cvxpy_instance = {"variables":variables, "params":params, "problem":problem, "eq_constraints":[], "ineq_constraints":constraints,\
                         "eq_functions":eq_funcs, "ineq_functions":ineq_funcs}
             
-                    # self.optlayer = ffoqp_eq_cst_schur.ffoqp(alpha=alpha, chunk_size=1, cvxpy_instance=cvxpy_instance)
-                    self.optlayer = ffoqp_eq_cst_schur.ffoqp(alpha=alpha, chunk_size=1, cvxpy_instance=cvxpy_instance, solver='qpsolvers')
+                    # self.optlayer = ffoqp_eq_cst_schur.FFOQPLayer(alpha=alpha, chunk_size=1, cvxpy_instance=cvxpy_instance)
+                    self.optlayer = FFOQPLayer(alpha=alpha, chunk_size=1, cvxpy_instance=cvxpy_instance, solver='qpsolvers')
                     
-                elif layer_type == FFOQP_EQ_PARALLELIZE:
-                    self.optlayer = ffoqp_eq_cst_parallelize.ffoqp(alpha=alpha, chunk_size=1)
             else:
                 if self.layer_type==QPTH:
                     self.optlayer = QPFunction(verbose=-1)
@@ -278,21 +246,8 @@ class OptModel(nn.Module):
             
             cone_dim = opt_dim
             problem, objective_fn, constraints, params, variables = setup_cvxpy_synthetic_problem_with_cones(opt_dim, self.num_ineq, cone_dim)
-            multithread = True
             if layer_type==FFOCP_EQ:
-                if not multithread:
-                    self.optlayer = BLOLayerGeneral(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12)
-                else:
-                    problem_list = []
-                    params_list = []
-                    variables_list = []
-                    for i in range(batch_size):
-                        problem, objective_fn, constraints, params, variables = setup_cvxpy_synthetic_problem_with_cones(opt_dim, self.num_ineq, cone_dim)
-                        problem_list.append(problem)
-                        params_list.append(params)
-                        variables_list.append(variables)
-                    
-                    self.optlayer = BLOLayerGeneralMT(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=1000.0, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, backward_eps=backward_eps)
+                self.optlayer = FFOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, backward_eps=backward_eps)
             elif layer_type==CVXPY_LAYER:
                 self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
             elif layer_type==LPGD:

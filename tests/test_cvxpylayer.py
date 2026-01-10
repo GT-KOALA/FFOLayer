@@ -16,7 +16,7 @@ torch = pytest.importorskip("torch")
 
 from torch.autograd import grad  # noqa: E402
 
-from cvxpylayers.torch import CvxpyLayer  # noqa: E402
+from baselines.cvxpylayers_local.cvxpylayer import CvxpyLayer  # noqa: E402
 
 import os as _os
 import json as _json
@@ -26,8 +26,8 @@ import inspect as _inspect
 import torch as _torch
 from cvxpylayers.torch import CvxpyLayer as _CvxpyLayerRef
 
-_FFO_MOD = _os.environ.get("FFO_MOD", "ffocp_eq_cone_general_not_dpp_cvxtorch")
-_FFO_ENTRY = _os.environ.get("FFO_ENTRY", "BLOLayer")
+_FFO_MOD = _os.environ.get("FFO_MOD", "src.ffolayer.ffocp_eq")
+_FFO_ENTRY = _os.environ.get("FFO_ENTRY", "FFOLayer")
 
 _FFO_SOL_ATOL = float(_os.environ.get("FFO_SOL_ATOL", "1e-5"))
 _FFO_SOL_RTOL = float(_os.environ.get("FFO_SOL_RTOL", "1e-3"))
@@ -70,7 +70,7 @@ def _construct_ffo(problem, parameters, variables, kwargs=None):
         ctor_kwargs = {} if kwargs is None else {k: v for k, v in kwargs.items()}
 
     tries = [
-        lambda: entry(problem=problem, parameters=parameters, variables=variables),
+        lambda: entry(problem=problem, parameters=parameters, variables=variables, eps=1e-12, backward_eps=1e-12, ),
     ]
     last = None
     for f in tries:
@@ -99,6 +99,7 @@ class CvxpyLayer(_CvxpyLayerRef):
 
     def __call__(self, *params, **kwargs):
         # Run CvxpyLayer
+        kwargs["solver_args"] = {"eps": 1e-12}
         y_ref = super().__call__(*params, **kwargs)
 
         if not _FFO_COMPARE:
