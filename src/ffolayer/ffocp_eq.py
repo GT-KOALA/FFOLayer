@@ -203,7 +203,7 @@ def _active_counts_one(b, ctx, i: int, tol: float):
     out["total"] = out["eq"] + out["ineq"] + out["cone_total"]
     return out
 
-def active_counts_dict(ctx, tol, reduce: str = "sum"):
+def active_counts_dict(ctx, tol = None, reduce: str = "sum"):
     tol = float(ctx.mt.slack_tol if tol is None else tol)
     per_batch = [_active_counts_one(ctx.bundles[i], ctx, i, tol) for i in range(ctx.batch_size)]
     if reduce is None:
@@ -866,11 +866,12 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
             ctx.pnorm_grad = pnorm_grad
             ctx.params = params
 
-            ctx.active_counts = active_counts_dict(ctx)
-            print(f"active_counts: {ctx.active_counts}")
+            # if want to check active counts
+            # ctx.active_counts = active_counts_dict(ctx)
+            # print(f"active_counts: {ctx.active_counts}")
 
             sol_torch = [to_torch(arr, ctx.dtype, ctx.device) for arr in sol_numpy]
-            return tuple(sol_torch)
+            return tuple(sol_torch) # return the solution
 
         @staticmethod
         def backward(ctx, *dvars):
