@@ -8,8 +8,8 @@ import cvxpy as cp
 from constants import *
 from torch.nn.parameter import Parameter
 
-from src.ffolayer.ffocp_eq import FFOLayer
-from src.ffolayer.ffoqp_eq import FFOQPLayer
+from ffolayer.ffocp_eq import FFOLayer
+from ffolayer.ffoqp_eq import FFOQPLayer
 
 from dqp import dQP
 from baselines.qpthlocal.qp import QPFunction
@@ -179,7 +179,7 @@ class OptModel(nn.Module):
                 problem, objective_fn, constraints, params, variables = setup_cvxpy_synthetic_problem(opt_dim, self.num_ineq)
         
                 if layer_type==FFOCP_EQ:
-                    self.optlayer = FFOLayerGeneralMT(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, backward_eps=backward_eps)
+                    self.optlayer = FFOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, backward_eps=backward_eps)
                         
                 elif layer_type==CVXPY_LAYER:
                     self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)

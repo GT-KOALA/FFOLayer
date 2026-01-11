@@ -6,7 +6,7 @@ cd "$SCRIPT_DIR/.."
 seeds=($(seq 1 1 5))
 # seeds=(1)
 
-ydims=($(seq 200 100 1000))
+ydims=($(seq 200 100 500))
 # ydims=(200)
 
 # backward_eps_list=    #($(seq 0.001 0.00001 0.00000001)) #0.001,0.00001,0.00000001

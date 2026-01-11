@@ -5,7 +5,7 @@ cd "$SCRIPT_DIR/.."
 
 # seeds=($(seq 1 5))
 # seeds=($(seq 1 1 5))
-seeds=(1)
+seeds=(11)
 
 # ydims=($(seq 200 100 1000))
 ydims=(200)

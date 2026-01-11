@@ -8,8 +8,8 @@ import torch.nn as nn
 from torch.nn.parameter import Parameter
 import numpy as np
 
-from src.ffolayer.ffocp_eq import FFOLayer
-from src.ffolayer.ffoqp_eq import FFOQPLayer
+from ffolayer.ffocp_eq import FFOLayer
+from ffolayer.ffoqp_eq import FFOQPLayer
 
 from dqp import dQP
 from baselines.BPQP import BPQPLayer
