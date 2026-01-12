@@ -208,8 +208,6 @@ def train_test_loop(args, experiment_dir, step_experiment_dir, n, device):
                 with open(step_experiment_dir + filename, 'a') as step_file:
                     step_file.write(f'{i},{loss.item()},{iter_forward_time},{iter_backward_time},{train_err},{forward_time},{backward_time}\n')
                     step_file.flush()
-                if i == 20:
-                    exit()
 
             if epoch==num_epochs-1:
                     checkpoint = {
