@@ -8,8 +8,8 @@ import torch.nn as nn
 from torch.nn.parameter import Parameter
 import numpy as np
 
-from ffolayer.ffocp_eq import FFOLayer
-from ffolayer.ffoqp_eq import FFOQPLayer
+from src.ffolayer.ffocp_eq import FFOLayer
+from src.ffolayer.ffoqp_eq import FFOQPLayer
 
 from dqp import dQP
 from baselines.BPQP import BPQPLayer
@@ -164,6 +164,21 @@ class SingleOptLayerSudoku(nn.Module):
             problem, objective, ineq_functions, eq_functions, params, variables = setup_cvx_qp_problem(opt_var_dim=self.y_dim, num_ineq=self.num_ineq, num_eq=self.num_eq)
             
             if layer_type==FFOCP_EQ:
+                # problem_list = []
+                # ineq_functions_list = []
+                # eq_functions_list = []
+                # params_list = []
+                # variables_list = []
+                # for i in range(batch_size):
+                #     problem, objective, ineq_functions, eq_functions, params, variables = setup_cvx_qp_problem(opt_var_dim=self.y_dim, num_ineq=self.num_ineq, num_eq=self.num_eq)
+                #     problem_list.append(problem)
+                #     ineq_functions_list.append(ineq_functions)
+                #     eq_functions_list.append(eq_functions)
+                #     params_list.append(params)
+                #     variables_list.append(variables)
+                # self.optlayer = FFOLayer(problem_list, parameters_list=params_list, variables_list=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-6, backward_eps=1e-5)
+
+                # self.optlayer = FFOLayer(problem_list, parameters=params_list, variables=variables_list, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-6, backward_eps=1e-5)
                 self.optlayer = FFOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-6, backward_eps=1e-5)
 
             elif layer_type==FFOQP_EQ or layer_type==FFOQP_EQ_SCHUR:
@@ -237,7 +252,7 @@ class SingleOptLayerSudoku(nn.Module):
             params_batched = [Q_batched, p, G_batched, h_batched, A_batched, b_batched]
             
             if self.layer_type==LPGD:
-                sol, = self.optlayer(*params_batched, solver_args={"eps": 1e-12}) #, solver_args={"eps": 1e-8, "max_iters": 10000, "acceleration_lookback": 0}
+                sol, = self.optlayer(*params_batched, solver_args={"eps": 1e-6}) #, solver_args={"eps": 1e-8, "max_iters": 10000, "acceleration_lookback": 0}
                 # sol, = self.optlayer(*params_batched)
             elif self.layer_type==ALTDIFF:
                 sol = self.optlayer(*params_batched)

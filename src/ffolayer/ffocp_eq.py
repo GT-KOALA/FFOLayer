@@ -471,10 +471,11 @@ def FFOLayer(
     slack_tol: float = 1e-8,
     eps: float = 1e-13,
     compute_cos_sim: bool = False,
-    max_workers: int = 1,
+    max_workers: int = 8,
     backward_eps: float = 1e-3,
 ):
     _require_cvxtorch()
+    print(f"FFOLayer forward eps = {eps}, backward eps = {backward_eps}")
     return _FFOLayer(
         problem=problem,
         parameters=parameters,
@@ -501,7 +502,7 @@ class _FFOLayer(torch.nn.Module):
         eps,
         backward_eps,
         compute_cos_sim,
-        max_workers: int = 1,
+        max_workers: int = 8,
     ):
         super().__init__()
 
@@ -512,9 +513,47 @@ class _FFOLayer(torch.nn.Module):
         self.backward_eps = float(backward_eps)
         self._compute_cos_sim = bool(compute_cos_sim)
 
+
         self._problem_proto = problem
-        self._param_templates = list(parameters)
-        self._var_templates = list(variables)
+
+        # If problem is a list, user may pass parameters/variables as list-of-list (one list per problem).
+        # We keep:
+        #   - _param_templates/_var_templates: a FLAT template list (from the first problem) for batch inference
+        #   - _params_list_proto/_vars_list_proto: per-problem lists for bundle construction
+        self._params_list_proto = None
+        self._vars_list_proto = None
+
+        if isinstance(problem, (list, tuple)):
+            problem_list = list(problem)
+            if len(problem_list) == 0:
+                raise ValueError("Empty problem_list.")
+
+            # Case A: parameters/variables are list-of-list aligned with problem_list
+            if (
+                isinstance(parameters, (list, tuple)) and len(parameters) == len(problem_list)
+                and len(parameters) > 0 and isinstance(parameters[0], (list, tuple))
+            ):
+                if not (isinstance(variables, (list, tuple)) and len(variables) == len(problem_list)
+                        and len(variables) > 0 and isinstance(variables[0], (list, tuple))):
+                    raise ValueError("When problem is a list and parameters is list-of-list, variables must be list-of-list too.")
+
+                self._params_list_proto = [list(pi) for pi in parameters]
+                self._vars_list_proto = [list(vi) for vi in variables]
+
+                # Flat templates for inference/checking come from the first problem
+                self._param_templates = list(self._params_list_proto[0])
+                self._var_templates = list(self._vars_list_proto[0])
+
+            # Case B: parameters/variables are flat templates; we'll map by name in _lazy_init_from_B
+            else:
+                self._param_templates = list(parameters)
+                self._var_templates = list(variables)
+        else:
+            self._param_templates = list(parameters)
+            self._var_templates = list(variables)
+        # self._problem_proto = problem
+        # self._param_templates = list(parameters)
+        # self._var_templates = list(variables)
         self._max_workers_user = max_workers
         self._initialized = False
 
@@ -569,7 +608,7 @@ class _FFOLayer(torch.nn.Module):
         return B
 
 
-    def _lazy_init_from_B(self, B: int):
+    def _lazy_init_from_B(self, B: int, solver_args: dict):
         if self._initialized:
             return
 
@@ -578,17 +617,40 @@ class _FFOLayer(torch.nn.Module):
             if len(problem_list) != B:
                 raise ValueError(f"Got batch size B={B}, but problem_list has len={len(problem_list)}.")
 
-            parameters_list = list(self._param_templates)
-            variables_list = list(self._var_templates)
-            if not (len(parameters_list) == len(variables_list) == len(problem_list)):
-                raise ValueError("When passing problem as list, parameters and variables must be list-of-list aligned.")
+            # parameters_list = list(self._param_templates)
+            # variables_list = list(self._var_templates)
+            # if not (len(parameters_list) == len(variables_list) == len(problem_list)):
+            #     raise ValueError("When passing problem as list, parameters and variables must be list-of-list aligned.")
+            if self._params_list_proto is not None:
+                parameters_list = self._params_list_proto
+                variables_list = self._vars_list_proto
+                if not (len(parameters_list) == len(variables_list) == len(problem_list)):
+                    raise ValueError("When passing problem as list, parameters and variables must be list-of-list aligned.")
+                # sanity: each inner list length matches template length
+                P = len(self._param_templates)
+                V = len(self._var_templates)
+                for i in range(B):
+                    if len(parameters_list[i]) != P:
+                        raise ValueError(f"parameters_list[{i}] length mismatch: expected {P}, got {len(parameters_list[i])}")
+                    if len(variables_list[i]) != V:
+                        raise ValueError(f"variables_list[{i}] length mismatch: expected {V}, got {len(variables_list[i])}")
+            else:
+                # Otherwise, map by name from each problem
+                pnames = [p.name() for p in self._param_templates]
+                vnames = [v.name() for v in self._var_templates]
+                parameters_list, variables_list = [], []
+                for prob_i in problem_list:
+                    pmap = prob_i.param_dict
+                    vmap = prob_i.var_dict
+                    parameters_list.append([pmap[n] for n in pnames])
+                    variables_list.append([vmap[n] for n in vnames])
         else:
             pnames = [p.name() for p in self._param_templates]
             vnames = [v.name() for v in self._var_templates]
 
             problem_list, parameters_list, variables_list = [], [], []
             for _ in range(int(B)):
-                prob_i = copy.copy(self._problem_proto)
+                prob_i = copy.deepcopy(self._problem_proto)
                 pmap = prob_i.param_dict
                 vmap = prob_i.var_dict
                 params_i = [pmap[n] for n in pnames]
@@ -628,6 +690,7 @@ class _FFOLayer(torch.nn.Module):
 
         self._executor = ThreadPoolExecutor(max_workers=self.max_workers)
 
+        self._FFOLayerFn = _make_ffo_fn(self, solver_args=solver_args)
         self._initialized = True
 
 
@@ -645,10 +708,6 @@ class _FFOLayer(torch.nn.Module):
 
 
     def forward(self, *params, solver_args=None):
-        if not self._initialized:
-            B = self._infer_B_from_params(params)
-            self._lazy_init_from_B(B)
-
         if solver_args is None:
             solver_args = {}
         solver = solver_args.get("solver", cp.SCS)
@@ -666,6 +725,10 @@ class _FFOLayer(torch.nn.Module):
 
         solver_args = {**default_solver_args, **solver_args}
 
+        if not self._initialized:
+            B = self._infer_B_from_params(params)
+            self._lazy_init_from_B(B, solver_args)
+
         self._solver_args_fwd = dict(solver_args)
 
         self._solver_args_bwd = dict(solver_args)
@@ -674,9 +737,9 @@ class _FFOLayer(torch.nn.Module):
         if "eps" in self._solver_args_bwd:
             self._solver_args_bwd["eps"] = float(self.backward_eps)
 
-        Fn = _make_ffo_fn(self, solver_args)
-
-        return Fn.apply(*params)
+        # Fn = _make_ffo_fn(self, solver_args)
+        # return Fn.apply(*params)
+        return self._FFOLayerFn.apply(*params)
 
 def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
     solver_args = dict(solver_args)
@@ -787,6 +850,8 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                         prob.solve(solver=cp.OSQP, warm_start=False, verbose=False)
                     except Exception as e2:
                         raise RuntimeError(f"[forward] problem {i} solve failed: {e!r} {e2!r}")
+                
+                # print("solver used for forward pass:", prob.solver_stats.solver_name)
 
                 if prob.status not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
                     raise RuntimeError(f"[forward] problem {i} status: {prob.status}")
@@ -891,17 +956,21 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                     return [arr[i] if bs > 0 else arr for arr, bs in zip(params_np_all, ctx.batch_sizes)]
                 return params_np_all
 
+            # def _slice_dvars_np(i: int):
+            #     out = []
+            #     for arr, v in zip(dvars_np_all, ref["variables"]):
+            #         vshape = tuple(v.shape)
+            #         if arr.shape == (B,) + vshape:
+            #             out.append(arr[i])
+            #         elif B == 1 and arr.ndim >= 1 and arr.shape[0] == 1 and tuple(arr.shape[1:]) == vshape:
+            #             out.append(arr[0])
+            #         else:
+            #             out.append(arr)
+            #     return out
             def _slice_dvars_np(i: int):
-                out = []
-                for arr, v in zip(dvars_np_all, ref["variables"]):
-                    vshape = tuple(v.shape)
-                    if arr.shape == (B,) + vshape:
-                        out.append(arr[i])
-                    elif B == 1 and arr.ndim >= 1 and arr.shape[0] == 1 and tuple(arr.shape[1:]) == vshape:
-                        out.append(arr[0])
-                    else:
-                        out.append(arr)
-                return out
+                if ctx.batch:
+                    return [arr[i] for arr in dvars_np_all]
+                return dvars_np_all
 
             y_dim = int(np.prod((_slice_dvars_np(0)[0]).shape))
             num_eq = int(np.prod(ctx.eq_dual[0][0].shape)) if (len(ctx.eq_dual) > 0 and ctx.batch) else (
@@ -1011,6 +1080,8 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                         b["perturbed_problem"].solve(solver=cp.OSQP, eps_abs=1e-4, eps_rel=1e-4, warm_start=True, verbose=False)
                     except Exception as e2:
                         raise RuntimeError(f"[backward] problem {i} perturbed solve failed: {e!r} {e2!r}")
+                
+                # print("solver used for backward pass:", prob.solver_stats.solver_name)
 
                 if prob.status not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
                     raise RuntimeError(f"[backward] perturbed problem {i} status: {prob.status}")
@@ -1061,6 +1132,7 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
             vars_old = [to_torch(ctx.sol_numpy[j], ctx.dtype, ctx.device) for j in range(num_vars)]
 
             new_eq_dual_t = [to_torch(v, ctx.dtype, ctx.device) for v in new_eq_dual]
+            old_eq_dual_t = [to_torch(v, ctx.dtype, ctx.device) for v in ctx.eq_dual]
 
             old_scalar_dual_t = [to_torch(v, ctx.dtype, ctx.device) for v in ctx.scalar_ineq_dual]
             new_active_dual_t = [to_torch(v, ctx.dtype, ctx.device) for v in new_active_dual]
@@ -1092,6 +1164,7 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                     params_i = slice_params_for_batch(params_req, ctx.batch_sizes, i) if ctx.batch else params_req
 
                     new_eq_dual_i = [d[i] for d in new_eq_dual_t]
+                    old_eq_dual_i = [d[i] for d in old_eq_dual_t]
 
                     new_scalar_dual_full_i = []
                     ptr = 0
@@ -1104,6 +1177,7 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                             new_scalar_dual_full_i.append(new_pnorm_lam_t[lid][i])
                         else:
                             new_scalar_dual_full_i.append(old_scalar_dual_t[j][i])
+                    old_scalar_dual_full_i = [d[i] for d in old_scalar_dual_t]
 
                     new_exp_dual_i = []
                     for j in range(len(b["exp_cones"])):
@@ -1116,8 +1190,11 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                     phi_old = b["phi_torch"](*vars_old_i, *params_i)
 
                     eq_new = b["eq_dual_term_torch"](*vars_old_i, *params_i, *new_eq_dual_i)
+                    eq_old = b["eq_dual_term_torch"](*vars_old_i, *params_i, *old_eq_dual_i)
+
 
                     ineq_new = b["ineq_dual_term_torch"](*vars_old_i, *params_i, *new_scalar_dual_full_i)
+                    ineq_old = b["ineq_dual_term_torch"](*vars_old_i, *params_i, *old_scalar_dual_full_i)
 
                     if b["exp_dual_term_torch"] is not None:
                         exp_new = b["exp_dual_term_torch"](*vars_old_i, *params_i, *new_exp_dual_i)
@@ -1129,7 +1206,7 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                     else:
                         psd_new = 0.0
 
-                    loss = loss + (phi_new + ineq_new + eq_new + exp_new + psd_new - phi_old)
+                    loss = loss + (phi_new + ineq_new + eq_new + exp_new + psd_new - phi_old - eq_old - ineq_old)
 
                 loss = mt.alpha * loss
 
