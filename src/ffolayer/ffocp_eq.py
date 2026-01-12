@@ -517,9 +517,6 @@ class _FFOLayer(torch.nn.Module):
         self._problem_proto = problem
 
         # If problem is a list, user may pass parameters/variables as list-of-list (one list per problem).
-        # We keep:
-        #   - _param_templates/_var_templates: a FLAT template list (from the first problem) for batch inference
-        #   - _params_list_proto/_vars_list_proto: per-problem lists for bundle construction
         self._params_list_proto = None
         self._vars_list_proto = None
 
@@ -540,7 +537,6 @@ class _FFOLayer(torch.nn.Module):
                 self._params_list_proto = [list(pi) for pi in parameters]
                 self._vars_list_proto = [list(vi) for vi in variables]
 
-                # Flat templates for inference/checking come from the first problem
                 self._param_templates = list(self._params_list_proto[0])
                 self._var_templates = list(self._vars_list_proto[0])
 
