@@ -14,16 +14,25 @@ sns.set_theme(style="whitegrid", context="talk")
 palette = sns.color_palette()
 
 batch_size = 8
-BASE_DIR = f"../synthetic_results_{batch_size}"
+BASE_DIR = f"../synthetic_results_general_{batch_size}"
 # BASE_DIR = f"../synthetic_results_1_compare_SCS_OSQP_dim200_debug"
+# METHODS = [
+#     "cvxpylayer",
+#     "lpgd",
+#     "bpqp",
+#     "ffocp_eq",
+#     "dqp",
+#     "qpth",
+#     "ffoqp_eq",   
+# ]
 METHODS = [
     "cvxpylayer",
+    "qpth",
     "lpgd",
     "bpqp",
-    "ffocp_eq",
     "dqp",
-    "qpth",
-    "ffoqp_eq",   
+    "ffocp_eq",
+    "ffoqp_eq_schur"  
 ]
 METHODS_LEGEND = {
     "cvxpylayer": "CvxpyLayer",
@@ -32,7 +41,7 @@ METHODS_LEGEND = {
     "ffocp_eq": "FFOCP",
     "dqp": "dQP",
     "qpth": "qpth",
-    "ffoqp_eq": "FFOQP",
+    "ffoqp_eq_schur": "FFOQP",
 }
 
 METHODS_STEPS = [method+"_steps" for method in METHODS]
@@ -43,6 +52,10 @@ markers = ["o", "s", "D", "^", "v", "x", "P", "s"]
 markers_dict = {method: markers[i] for i, method in enumerate(method_order)}
 
 LINEWIDTH = 1.5
+
+def is_subsequence(a, b):
+    it = iter(b)
+    return all(x in it for x in a)
 
 def load_results_CP(base_dir=BASE_DIR, methods=METHODS, methods_legend=None):
     if methods_legend is None:
@@ -171,7 +184,11 @@ def plot_total_time_vs_method(
     plot_name_tag="",
 ):
     available_methods = set(df["method"].unique())
+    # print("hhhhhhh\n", df[df['method']=='FFOQP'])
+    # assert("FFOQP" in available_methods)
     filtered_method_order = [m for m in method_order if m in available_methods]
+    print("filtered_method_order:", filtered_method_order)
+    print("available method: ", available_methods)
 
     df_avg_method = df.groupby("method")[time_names].mean().reindex(filtered_method_order)
 
@@ -183,41 +200,82 @@ def plot_total_time_vs_method(
     max_time = np.nanmax(total_times)
     min_time = 0
     y_max = max_time * 1.05
+    
+    #### get groups of method to plot them close together
+    groups = [
+        ["CvxpyLayer", "qpth"], # KKT based
+        ["LPGD","BPQP", "dQP"], # optimization based
+        ["FFOCP", "FFOQP"], # our methods
+    ]
+    
+    # assert groups respect the filtered method order
+    flat_groups = [m for g in groups for m in g]
+   
+    groups = [[m for m in g if m in filtered_method_order] for g in groups]
+    groups = [g for g in groups if len(g) > 0]
+    
+    flat_groups = [m for g in groups for m in g]
+    print("groups:", flat_groups)
+    print("methods:", methods)
+    assert is_subsequence(flat_groups, methods), "Method groups do not respect the method order."
 
-    dashed_methods = {"CvxpyLayer", "LPGD", "BPQP", "FFOCP"}  # CP
-    x = np.arange(len(methods))
+    # dashed_methods = {"CvxpyLayer", "LPGD", "BPQP", "FFOCP"}  # CP
+    
+    inner_gap = 1.5     # spacing between bars inside a group
+    group_gap = len(methods)*3/7   ##so that when num methods is 7, group gap is 3.0   # extra spacing between groups
+
+    x = []
+    # labels = []
+    pos = 0.0
+
+    for g in groups:
+        for m in g:
+            x.append(pos)
+            # labels.append(m)
+            pos += inner_gap
+        pos += group_gap  # extra space after each group
+
+    
+    # x = np.arange(len(methods))
     width = 0.75
 
-    fig, ax = plt.subplots(figsize=(10, 5))
+    fig, ax = plt.subplots(figsize=(14, 5))
     sf = mticker.ScalarFormatter(useOffset=False)
     sf.set_scientific(False)
     ax.yaxis.set_major_formatter(sf)
     ax.yaxis.get_offset_text().set_visible(False)
 
     for i, m in enumerate(methods):
-        is_dashed = (m in dashed_methods)
-        ls = (0, (4, 2)) if is_dashed else "solid"
-        lw = 2.0 if is_dashed else 1.5
+        # is_dashed = (m in dashed_methods)
+        # ls = (0, (4, 2)) if is_dashed else "solid"
+        # lw = 2.0 if is_dashed else 1.5
 
+        # ax.bar(x[i], forward[i], width=width,
+        #        color=palette[0], edgecolor="black", linewidth=lw, linestyle=ls)
+        # ax.bar(x[i], backward[i], bottom=forward[i], width=width,
+        #        color=palette[1], edgecolor="black", linewidth=lw, linestyle=ls)
+        
         ax.bar(x[i], forward[i], width=width,
-               color=palette[0], edgecolor="black", linewidth=lw, linestyle=ls)
+               color=palette[0], edgecolor="black")
         ax.bar(x[i], backward[i], bottom=forward[i], width=width,
-               color=palette[1], edgecolor="black", linewidth=lw, linestyle=ls)
+               color=palette[1], edgecolor="black")
+
 
     ax.set_xticks(x)
     ax.set_xticklabels(methods)
     ax.set_ylabel("Time")
     ax.set_title("Total Time vs Methods")
     ax.set_ylim(min_time, y_max)
+    ax.set_xlim(min(x) - width, max(x) + width)
 
     handles = [
         Line2D([], [], linestyle="none", label="Comp. Time"),
         Patch(facecolor=palette[0], edgecolor="black", label="Forward"),
         Patch(facecolor=palette[1], edgecolor="black", label="Backward"),
-        Line2D([], [], linestyle="none", label=""),
-        Line2D([], [], linestyle="none", label="Solvers"),
-        Line2D([0], [0], color="black", linewidth=2, linestyle=(0, (4, 2)), label="CP methods"),
-        Line2D([0], [0], color="black", linewidth=2, linestyle="solid", label="QP methods"),
+        # Line2D([], [], linestyle="none", label=""),
+        # Line2D([], [], linestyle="none", label="Solvers"),
+        # Line2D([0], [0], color="black", linewidth=2, linestyle=(0, (4, 2)), label="CP methods"),
+        # Line2D([0], [0], color="black", linewidth=2, linestyle="solid", label="QP methods"),
     ]
 
     leg = ax.legend(
@@ -255,9 +313,10 @@ def plot_loss_vs_epoch(df, loss_metric_name, iteration_name='epoch', plot_path=B
 
     # --- Forward Time Figure ---
     plt.figure(figsize=(8,5))
-    ax = sns.lineplot(data=df_avg_epoch, x=iteration_name, y=loss_metric_name, hue='method', dashes=False, linewidth=LINEWIDTH)
+    ax = sns.lineplot(data=df_avg_epoch, x=iteration_name, y=loss_metric_name, hue='method', dashes=False, linewidth=LINEWIDTH, hue_order=method_order)
     plt.ylabel("loss")
     plt.title(f"Loss vs {iteration_name}")
+    
     
     # plt.legend(
     #     title=None,
@@ -995,26 +1054,28 @@ if __name__=="__main__":
     df = load_results_CP()
     df = df.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
     df["method"] = pd.Categorical(df["method"], categories=method_order, ordered=True)
+    df[df["ydim"] == 800]
 
     print("loaded df")
     print(df)
     # assert(1==0)
 
-    # plot_total_time_vs_method(df, time_names=['forward_time', 'backward_time'], plot_path=BASE_DIR, plot_name_tag="syn")
-    plot_total_time_vs_method_by_backwardTol(df, time_names=['forward_time', 'backward_time'],
-                                             plot_path=BASE_DIR, plot_name_tag="syn")
+    plot_total_time_vs_method(df, time_names=['forward_time', 'backward_time'], plot_path=BASE_DIR, plot_name_tag="new_syn_ydim800")
+    # plot_total_time_vs_method_by_backwardTol(df, time_names=['forward_time', 'backward_time'],
+    #                                          plot_path=BASE_DIR, plot_name_tag="syn")
    
    #########################################
     df = load_results_CP(methods=METHODS_STEPS)
     df = df.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
     df["method"] = pd.Categorical(df["method"], categories=method_order, ordered=True)
+    df[df["ydim"] == 800]
 
     print("loaded df steps")
 
     # plot_total_time_vs_method(df, time_names=['forward_solve_time', 'backward_solve_time'], plot_path=BASE_DIR, plot_name_tag="syn_steps_solve")
     # plot_total_time_vs_method(df, time_names=['forward_setup_time', 'backward_setup_time'], plot_path=BASE_DIR, plot_name_tag="syn_steps_setup")
     
-    # plot_loss_vs_epoch(df, "train_df_loss", iteration_name='iter', plot_path=BASE_DIR, plot_name_tag="syn_steps")
-    plot_loss_vs_epoch_method_tol(df, loss_metric='train_df_loss', iteration='iter',
-                                  plot_path=BASE_DIR, plot_name_tag="syn_steps")
+    plot_loss_vs_epoch(df, "train_df_loss", iteration_name='iter', plot_path=BASE_DIR, plot_name_tag="new_syn_steps_ydim800")
+    # plot_loss_vs_epoch_method_tol(df, loss_metric='train_df_loss', iteration='iter',
+    #                               plot_path=BASE_DIR, plot_name_tag="syn_steps")
     
