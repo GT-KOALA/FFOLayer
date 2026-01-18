@@ -14,7 +14,7 @@ sns.set_theme(style="whitegrid", context="talk")
 palette = sns.color_palette()
 
 batch_size = 8
-BASE_DIR = f"../synthetic_results_general_{batch_size}"
+BASE_DIR = f"../synthetic_results_{batch_size}"
 # BASE_DIR = f"../synthetic_results_1_compare_SCS_OSQP_dim200_debug"
 # METHODS = [
 #     "cvxpylayer",
@@ -221,8 +221,9 @@ def plot_total_time_vs_method(
 
     # dashed_methods = {"CvxpyLayer", "LPGD", "BPQP", "FFOCP"}  # CP
     
-    inner_gap = 1.5     # spacing between bars inside a group
-    group_gap = len(methods)*3/7   ##so that when num methods is 7, group gap is 3.0   # extra spacing between groups
+    ######### set bar positions with custom gaps
+    inner_gap = 0.25 #1.5     # spacing between bars inside a group
+    group_gap = len(methods)*0.5/7   ##so that when num methods is 7, group gap is 3.0   # extra spacing between groups
 
     x = []
     # labels = []
@@ -234,10 +235,22 @@ def plot_total_time_vs_method(
             # labels.append(m)
             pos += inner_gap
         pos += group_gap  # extra space after each group
+        
+    ########## set bar label positions with custom gaps
+    # inner_gap = 1.5     # spacing between bars inside a group
+    # group_gap = len(methods)*2/7   ##so that when num methods is 7, group gap is 3.0   # extra spacing between groups
+    # label_x = []
+    # pos = 0.0
+    # for g in groups:
+    #     for m in g:
+    #         label_x.append(pos)
+    #         pos += inner_gap
+    #     pos += group_gap  # extra space after each group
+    label_x = x
 
     
     # x = np.arange(len(methods))
-    width = 0.75
+    width = 0.25 #0.75
 
     fig, ax = plt.subplots(figsize=(14, 5))
     sf = mticker.ScalarFormatter(useOffset=False)
@@ -261,12 +274,15 @@ def plot_total_time_vs_method(
                color=palette[1], edgecolor="black")
 
 
-    ax.set_xticks(x)
+    ax.set_xticks(label_x)
+    methods = ["Cvxpy\nLayer" if m == "CvxpyLayer" else m for m in methods]
     ax.set_xticklabels(methods)
     ax.set_ylabel("Time")
     ax.set_title("Total Time vs Methods")
     ax.set_ylim(min_time, y_max)
-    ax.set_xlim(min(x) - width, max(x) + width)
+    min_x = min([min(x), min(label_x)])
+    max_x = max([max(x), max(label_x)])
+    ax.set_xlim(min_x - width, max_x + width)
 
     handles = [
         Line2D([], [], linestyle="none", label="Comp. Time"),
@@ -1054,7 +1070,7 @@ if __name__=="__main__":
     df = load_results_CP()
     df = df.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
     df["method"] = pd.Categorical(df["method"], categories=method_order, ordered=True)
-    df[df["ydim"] == 800]
+    df = df[df["ydim"] == 800]
 
     print("loaded df")
     print(df)
@@ -1068,7 +1084,7 @@ if __name__=="__main__":
     df = load_results_CP(methods=METHODS_STEPS)
     df = df.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
     df["method"] = pd.Categorical(df["method"], categories=method_order, ordered=True)
-    df[df["ydim"] == 800]
+    df = df[df["ydim"] == 800]
 
     print("loaded df steps")
 
