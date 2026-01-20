@@ -5,4 +5,4 @@ from .ffoqp_eq import FFOQPLayer
 
 __all__ = ["FFOLayer", "FFOQPLayer"]
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
