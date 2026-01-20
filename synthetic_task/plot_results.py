@@ -14,7 +14,7 @@ sns.set_theme(style="whitegrid", context="talk")
 palette = sns.color_palette()
 
 batch_size = 8
-BASE_DIR = f"../synthetic_results_{batch_size}"
+BASE_DIR = f"../synthetic_results_general_{batch_size}"
 # BASE_DIR = f"../synthetic_results_1_compare_SCS_OSQP_dim200_debug"
 # METHODS = [
 #     "cvxpylayer",
@@ -179,6 +179,7 @@ def plot_time_vs_epoch(df, time_names=['forward_time', 'backward_time'], iterati
 
 def plot_total_time_vs_method(
     df,
+    task_title_tag,
     time_names=["forward_time", "backward_time"],
     plot_path=BASE_DIR,
     plot_name_tag="",
@@ -222,8 +223,12 @@ def plot_total_time_vs_method(
     # dashed_methods = {"CvxpyLayer", "LPGD", "BPQP", "FFOCP"}  # CP
     
     ######### set bar positions with custom gaps
-    inner_gap = 0.25 #1.5     # spacing between bars inside a group
-    group_gap = len(methods)*0.5/7   ##so that when num methods is 7, group gap is 3.0   # extra spacing between groups
+    # inner_gap = 0.25 #1.5     # spacing between bars inside a group
+    # group_gap = len(methods)*0.5/7   ##so that when num methods is 7, group gap is 3.0   # extra spacing between groups
+    width = 0.08 #0.75 # bar width
+    inner_gap = 0.08 #1.5     # spacing between bars inside a group
+    group_gap = len(methods)*0.125/7   ##so that when num methods is 7, group gap is 3.0   # extra spacing between groups
+
 
     x = []
     # labels = []
@@ -250,9 +255,9 @@ def plot_total_time_vs_method(
 
     
     # x = np.arange(len(methods))
-    width = 0.25 #0.75
+    # width = 0.25 #0.75
 
-    fig, ax = plt.subplots(figsize=(14, 5))
+    fig, ax = plt.subplots(figsize=(14, 7))
     sf = mticker.ScalarFormatter(useOffset=False)
     sf.set_scientific(False)
     ax.yaxis.set_major_formatter(sf)
@@ -278,7 +283,7 @@ def plot_total_time_vs_method(
     methods = ["Cvxpy\nLayer" if m == "CvxpyLayer" else m for m in methods]
     ax.set_xticklabels(methods)
     ax.set_ylabel("Time")
-    ax.set_title("Total Time vs Methods")
+    ax.set_title(f"{task_title_tag}: Total Time vs Methods")
     ax.set_ylim(min_time, y_max)
     min_x = min([min(x), min(label_x)])
     max_x = max([max(x), max(label_x)])
@@ -319,7 +324,7 @@ def plot_total_time_vs_method(
     fig.savefig(f"{plot_path}/{plot_name_tag}_total_time_vs_method.pdf", dpi=300, bbox_inches="tight")
     plt.close(fig)
     
-def plot_loss_vs_epoch(df, loss_metric_name, iteration_name='epoch', plot_path=BASE_DIR, plot_name_tag="", loss_range=None, stride=50):
+def plot_loss_vs_epoch(df, loss_metric_name, task_title_tag, iteration_name='epoch', plot_path=BASE_DIR, plot_name_tag="", loss_range=None, stride=50):
     df_avg_epoch = df.groupby(['method', iteration_name])[[loss_metric_name]].mean().reset_index()
     
     # print(df_avg_epoch)
@@ -331,7 +336,7 @@ def plot_loss_vs_epoch(df, loss_metric_name, iteration_name='epoch', plot_path=B
     plt.figure(figsize=(8,5))
     ax = sns.lineplot(data=df_avg_epoch, x=iteration_name, y=loss_metric_name, hue='method', dashes=False, linewidth=LINEWIDTH, hue_order=method_order)
     plt.ylabel("loss")
-    plt.title(f"Loss vs {iteration_name}")
+    plt.title(f"{task_title_tag}: Loss vs iteration")
     
     
     # plt.legend(
@@ -1066,7 +1071,7 @@ def plot_comp_grad_metrics_vs_iter_by_ydim(
 
 
 if __name__=="__main__":
-    
+    task_title = "SOCP"
     df = load_results_CP()
     df = df.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
     df["method"] = pd.Categorical(df["method"], categories=method_order, ordered=True)
@@ -1076,7 +1081,7 @@ if __name__=="__main__":
     print(df)
     # assert(1==0)
 
-    plot_total_time_vs_method(df, time_names=['forward_time', 'backward_time'], plot_path=BASE_DIR, plot_name_tag="new_syn_ydim800")
+    plot_total_time_vs_method(df, task_title_tag=task_title, time_names=['forward_time', 'backward_time'], plot_path=BASE_DIR, plot_name_tag="syn_soc_ydim800")
     # plot_total_time_vs_method_by_backwardTol(df, time_names=['forward_time', 'backward_time'],
     #                                          plot_path=BASE_DIR, plot_name_tag="syn")
    
@@ -1091,7 +1096,7 @@ if __name__=="__main__":
     # plot_total_time_vs_method(df, time_names=['forward_solve_time', 'backward_solve_time'], plot_path=BASE_DIR, plot_name_tag="syn_steps_solve")
     # plot_total_time_vs_method(df, time_names=['forward_setup_time', 'backward_setup_time'], plot_path=BASE_DIR, plot_name_tag="syn_steps_setup")
     
-    plot_loss_vs_epoch(df, "train_df_loss", iteration_name='iter', plot_path=BASE_DIR, plot_name_tag="new_syn_steps_ydim800")
+    plot_loss_vs_epoch(df, "train_df_loss", task_title_tag=task_title, iteration_name='iter', plot_path=BASE_DIR, plot_name_tag="syn_soc_steps_ydim800")
     # plot_loss_vs_epoch_method_tol(df, loss_metric='train_df_loss', iteration='iter',
     #                               plot_path=BASE_DIR, plot_name_tag="syn_steps")
     

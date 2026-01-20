@@ -235,6 +235,7 @@ def plot_total_time_vs_method(
     time_names=["forward_time", "backward_time"],
     plot_path=BASE_DIR,
     plot_name_tag="",
+    task_title_tag="Sudoku"
 ):
     available_methods = set(df["method"].unique())
     # print("hhhhhhh\n", df[df['method']=='FFOQP'])
@@ -275,8 +276,9 @@ def plot_total_time_vs_method(
     # dashed_methods = {"CvxpyLayer", "LPGD", "BPQP", "FFOCP"}  # CP
     
     ######### set bar positions with custom gaps
-    inner_gap = 0.25 #1.5     # spacing between bars inside a group
-    group_gap = len(methods)*0.5/7   ##so that when num methods is 7, group gap is 3.0   # extra spacing between groups
+    width = 0.08 #0.75 # bar width
+    inner_gap = 0.08 #1.5     # spacing between bars inside a group
+    group_gap = len(methods)*0.125/7   ##so that when num methods is 7, group gap is 3.0   # extra spacing between groups
 
     x = []
     # labels = []
@@ -303,9 +305,9 @@ def plot_total_time_vs_method(
 
     
     # x = np.arange(len(methods))
-    width = 0.25 #0.75
+    
 
-    fig, ax = plt.subplots(figsize=(14, 5))
+    fig, ax = plt.subplots(figsize=(14, 7))
     sf = mticker.ScalarFormatter(useOffset=False)
     sf.set_scientific(False)
     ax.yaxis.set_major_formatter(sf)
@@ -331,7 +333,7 @@ def plot_total_time_vs_method(
     methods = ["Cvxpy\nLayer" if m == "CvxpyLayer" else m for m in methods]
     ax.set_xticklabels(methods)
     ax.set_ylabel("Time")
-    ax.set_title("Total Time vs Methods")
+    ax.set_title(f"{task_title_tag}: Total Time vs Methods")
     ax.set_ylim(min_time, y_max)
     min_x = min([min(x), min(label_x)])
     max_x = max([max(x), max(label_x)])
@@ -372,7 +374,8 @@ def plot_total_time_vs_method(
     fig.savefig(f"{plot_path}/{plot_name_tag}_total_time_vs_method.pdf", dpi=300, bbox_inches="tight")
     plt.close(fig)
 
-def plot_losse_vs_epoch(df, loss_metric_name, iteration_name='epoch', plot_path=BASE_DIR, plot_name_tag="", loss_range=None, stride=50):
+def plot_losse_vs_epoch(df, loss_metric_name, iteration_name='epoch', plot_path=BASE_DIR, plot_name_tag="", loss_range=None, stride=50,
+    task_title_tag="Sudoku"):
     df_avg_epoch = df.groupby(['method', iteration_name])[[loss_metric_name]].mean().reset_index()
     # df_avg_epoch = df_avg_epoch[df_avg_epoch[iteration_name] % stride == 0]
 
@@ -380,7 +383,7 @@ def plot_losse_vs_epoch(df, loss_metric_name, iteration_name='epoch', plot_path=
     plt.figure(figsize=(8,5))
     ax = sns.lineplot(data=df_avg_epoch, x=iteration_name, y=loss_metric_name, hue='method', dashes=False, linewidth=LINEWIDTH, hue_order=method_order)
     plt.ylabel("loss")
-    plt.title(f"Loss vs {iteration_name}")
+    plt.title(f"{task_title_tag}: Loss vs iteration")
     
     # plt.legend(
     #     title=None,
@@ -404,7 +407,7 @@ if __name__=="__main__":
     
     # plot_time_vs_method(df, time_names=['forward_time', 'backward_time'], plot_path=BASE_DIR, plot_name_tag="sudoku")
     # plot_time_vs_epoch(df, time_names=['forward_time', 'backward_time'], iteration_name='epoch', plot_path=BASE_DIR)
-    plot_total_time_vs_method(df, time_names=['forward_time', 'backward_time'], plot_path=BASE_DIR, plot_name_tag="new_sudoku")
+    plot_total_time_vs_method(df, time_names=['forward_time', 'backward_time'], plot_path=BASE_DIR, plot_name_tag="sudoku")
     
     
     df = load_results(methods=METHODS_STEPS)
@@ -415,5 +418,5 @@ if __name__=="__main__":
     # plot_time_vs_epoch(df, time_names=['iter_forward_time', 'iter_backward_time'], iteration_name='iter', plot_path=BASE_DIR, plot_name_tag="sudoku_steps")
     # plot_total_time_vs_method(df, time_names=['iter_forward_time', 'iter_backward_time'], plot_path=BASE_DIR, plot_name_tag="sudoku_steps")
 
-    plot_losse_vs_epoch(df, "train_loss", iteration_name='iter', plot_path=BASE_DIR, plot_name_tag="new_sudoku_steps", loss_range=(0, 2.4))
+    plot_losse_vs_epoch(df, "train_loss", iteration_name='iter', plot_path=BASE_DIR, plot_name_tag="sudoku_steps", loss_range=(0, 2.4))
     # plot_losse_vs_epoch(df, "train_error", iteration_name='iter', plot_path=BASE_DIR, plot_name_tag="sudoku_steps")
