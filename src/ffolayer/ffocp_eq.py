@@ -473,6 +473,7 @@ def FFOLayer(
     compute_cos_sim: bool = False,
     max_workers: int = 8,
     backward_eps: float = 1e-3,
+    verbose: bool = False,
 ):
     _require_cvxtorch()
     print(f"FFOLayer forward eps = {eps}, backward eps = {backward_eps}")
@@ -487,6 +488,7 @@ def FFOLayer(
         backward_eps=backward_eps,
         compute_cos_sim=compute_cos_sim,
         max_workers=max_workers,
+        verbose=verbose,
     )
 
 
@@ -503,6 +505,7 @@ class _FFOLayer(torch.nn.Module):
         backward_eps,
         compute_cos_sim,
         max_workers: int = 8,
+        verbose: bool = False,
     ):
         super().__init__()
 
@@ -512,7 +515,7 @@ class _FFOLayer(torch.nn.Module):
         self.eps = float(eps)
         self.backward_eps = float(backward_eps)
         self._compute_cos_sim = bool(compute_cos_sim)
-
+        self.verbose = bool(verbose)
 
         self._problem_proto = problem
 
@@ -554,7 +557,6 @@ class _FFOLayer(torch.nn.Module):
         self._initialized = False
 
         self.num_problems = 0
-        self.max_workers = None
         self.bundles = None
         self.problem_list = None
         self.perturbed_problem_list = None
@@ -928,8 +930,9 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
             ctx.params = params
 
             # if want to check active counts
-            # ctx.active_counts = active_counts_dict(ctx)
-            # print(f"active_counts: {ctx.active_counts}")
+            if mt.verbose:
+                ctx.active_counts = active_counts_dict(ctx)
+                print(f"active_counts: {ctx.active_counts}")
 
             sol_torch = [to_torch(arr, ctx.dtype, ctx.device) for arr in sol_numpy]
             return tuple(sol_torch) # return the solution

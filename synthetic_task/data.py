@@ -1,5 +1,5 @@
 import torch
-from models import *
+from models import MLP
 
 def genData(device, input_dim=64, output_dim=10, num_samples=2048, batch_size=32):
     # Generate some data

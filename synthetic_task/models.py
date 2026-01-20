@@ -8,7 +8,7 @@ import cvxpy as cp
 from constants import *
 from torch.nn.parameter import Parameter
 
-from ffolayer.ffocp_eq import FFOLayer
+from src.ffolayer.ffocp_eq import FFOLayer
 from ffolayer.ffoqp_eq import FFOQPLayer
 
 from dqp import dQP
@@ -71,7 +71,7 @@ def setup_cvxpy_synthetic_problem(n, n_ineq_constraints, unconstrained=False):
 
     return problem, objective_fn, constraints, parameters, variables
 
-def setup_cvxpy_synthetic_problem_with_cones(n, n_ineq_constraints, cone_dim, unconstrained=False):
+def setup_cvxpy_synthetic_problem_with_cones(n, n_ineq_constraints, cone_dim, num_cones=30, unconstrained=False):
     Q_cp = cp.Parameter((n, n), PSD=True)
     q_cp = cp.Parameter(n)
     G_cp = cp.Parameter((n_ineq_constraints, n))
@@ -86,8 +86,12 @@ def setup_cvxpy_synthetic_problem_with_cones(n, n_ineq_constraints, cone_dim, un
     # t_cp = cp.Parameter(nonneg=True)
 
     # === SOC constraints ===
-    # TODO: now only one cone, add multiple cones later
-    constraints.append(cp.SOC(1, z_cp))
+    # constraints.append(cp.SOC(1, z_cp))
+    soc_rhs = 3.0
+    constraints = [
+        cp.SOC(soc_rhs, z_cp[i * cone_dim : (i + 1) * cone_dim])
+        for i in range(num_cones)
+    ]
 
     if not unconstrained:
         constraints.append(G_cp @ z_cp <= h_cp)
@@ -244,10 +248,11 @@ class OptModel(nn.Module):
                 self.G = G.to(device)
                 self.h = h.to(device)
             
-            cone_dim = opt_dim
-            problem, objective_fn, constraints, params, variables = setup_cvxpy_synthetic_problem_with_cones(opt_dim, self.num_ineq, cone_dim)
+            cone_dim = max(1, opt_dim // 30)
+            num_cones = 30
+            problem, objective_fn, constraints, params, variables = setup_cvxpy_synthetic_problem_with_cones(opt_dim, self.num_ineq, cone_dim, num_cones)
             if layer_type==FFOCP_EQ:
-                self.optlayer = FFOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, backward_eps=backward_eps)
+                self.optlayer = FFOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, backward_eps=backward_eps, verbose=True)
             elif layer_type==CVXPY_LAYER:
                 self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
             elif layer_type==LPGD:
