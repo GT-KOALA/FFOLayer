@@ -8,12 +8,9 @@ import argparse
 from models import *
 from data import genData
 
-
 from torch.utils.tensorboard import SummaryWriter
 
-
-       
-
+from utils_synthetic import PeakRSS, bytes_to_gb
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -30,7 +27,7 @@ if __name__ == '__main__':
     parser.add_argument('--backward_eps', type=float, default=1e-8, help='backward epsilon')
 
     parser.add_argument('--device', type=str, default='cuda:0', help='device')
-    parser.add_argument('--learn_constraint', type=int, default=1, help='whether to learn constraint')
+    parser.add_argument('--learn_constraint', type=int, default=0, help='whether to learn constraint')
     parser.add_argument('--suffix', type=str, default="", help='suffix to the result directory')
     
     
@@ -45,7 +42,6 @@ if __name__ == '__main__':
     slack_tol = args.slack_tol
     backward_eps = args.backward_eps
 
-    # Set random seed for reproducibility
     device = torch.device(args.device) if torch.cuda.is_available() else torch.device('cpu')
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -59,11 +55,11 @@ if __name__ == '__main__':
     batch_size = args.batch_size
 
     train_loader, test_loader = genData(device, input_dim, ydim, num_samples, batch_size)
-    # print(len(train_loader))
-    # assert(len(train_loader)*batch_size == 1600)
 
-    model = OptModel(input_dim, ydim, layer_type=method, constraint_learnable=(args.learn_constraint==1), batch_size=batch_size, device=device, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, backward_eps=backward_eps, is_QP=False).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0)
+    with PeakRSS(include_children=True, interval=0.0001) as m_init:
+        model = OptModel(input_dim, ydim, layer_type=method, constraint_learnable=(args.learn_constraint==1), batch_size=batch_size, device=device, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, backward_eps=backward_eps, is_QP=False).to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0)
+    print(f"initial RSS: {bytes_to_gb(m_init.peak)}")
     loss_fn = torch.nn.MSELoss()
     
     time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime())
@@ -78,41 +74,20 @@ if __name__ == '__main__':
         filename = '{}_ydim{}_lr{}_seed{}_backwardTol{}.csv'.format(method, ydim, learning_rate, seed, backward_eps)
     else:
         filename = '{}_ydim{}_lr{}_seed{}.csv'.format(method, ydim, learning_rate, seed)
-    # if os.path.exists(directory + filename):
-    #     os.remove(directory + filename)
 
-    # if not os.path.exists(directory):
     os.makedirs(directory, exist_ok=True)
         
     step_experiment_dir = '../synthetic_results_general_{}{}/{}_steps/'.format(args.batch_size, args.suffix, method)
-    # if os.path.exists(step_experiment_dir + filename):
-    #     os.remove(step_experiment_dir + filename)
-    # if not os.path.exists(step_experiment_dir):
+   
     os.makedirs(step_experiment_dir, exist_ok=True)
     with open(step_experiment_dir + filename, 'w') as step_file:
         step_file.write('epoch, iter, train_df_loss, iter_forward_time, iter_backward_time, forward_solve_time, backward_solve_time, forward_setup_time, backward_setup_time\n')
         step_file.flush()
-        
-        
-    # if method=="ffocp_eq":
-    #     timing_directory = '../synthetic_results_{}{}/{}_debug_timing/'.format(args.batch_size, args.suffix, method)
-    #     timing_filename = '{}_ydim{}_lr{}_seed{}.csv'.format(method, ydim, learning_rate, seed)
-    #     if os.path.exists(timing_directory + timing_filename):
-    #         os.remove(timing_directory + timing_filename)
-
-    #     if not os.path.exists(timing_directory):
-    #         os.makedirs(timing_directory)
-            
-    #     with open(timing_directory + timing_filename, 'w') as timing_file:
-    #         timing_file.write('epoch, forward_time, backward_time, forward_opt_time, backward_opt_time, forward_num_iters, backward_num_iters, forward_setup_time, backward_setup_time, forward_solve_time, backward_solve_time, pre_autograd_time, autograd_time\n')
-    #         timing_file.flush()
-
-    
     
     ts_weight = 0
     norm_weight = 0
     
-    experiment_start_time = 0
+    experiment_start_time = time.time()
     
     with open(directory + filename, 'w') as file:
         file.write('epoch, train_ts_loss, test_ts_loss, train_df_loss, test_df_loss, forward_time, backward_time\n')
@@ -139,30 +114,31 @@ if __name__ == '__main__':
             model.train()
             for i, (x, y) in enumerate(train_loader):
                 if i%10==0:
-                    time_elapsed = experiment_start_time - time.time()
+                    time_elapsed = time.time() - experiment_start_time
                     print(f"\t\t train example: {i}/{len(train_loader)}, time elpased:{time_elapsed/60} minutes")
                 
                 iter_start_time = time.time()
-                
                 start_time = time.time()
 
-                z, y_pred = model(x) # (opt solution, predicted q)
-                ts_loss = loss_fn(y_pred, y)
+                with PeakRSS(include_children=True, interval=0.0001) as m_fwd:
+                    z, y_pred = model(x) # (opt solution, predicted q)
+                    print(f"forward RSS: {bytes_to_gb(m_fwd.peak)}")
+                    ts_loss = loss_fn(y_pred, y)
                 
                 df_loss = torch.mean(y * z)
                 loss = df_loss + ts_loss * ts_weight + torch.norm(z) * norm_weight
                 
                 forward_time_ = time.time() - start_time
                 
-                start_time = time.time()
-                loss.backward()
-                backward_time_ = time.time() - start_time
-                
-                
+                with PeakRSS(include_children=True, interval=0.0001) as m_bwd:
+                    start_time = time.time()
+                    loss.backward()
+                    backward_time_ = time.time() - start_time
+                    print(f"backward RSS: {bytes_to_gb(m_bwd.peak)}")
+        
                 iter_time = time.time() - iter_start_time
                 
-                
-                do_record = True #not(epoch==0 and i==0)
+                do_record = True
                 if do_record:
                     forward_time += forward_time_
                     backward_time += backward_time_
@@ -196,48 +172,36 @@ if __name__ == '__main__':
                         
                     train_ts_loss_list.append(ts_loss.item())
                     train_df_loss_list.append(df_loss.item())
-                    
 
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
-                #if epoch > 0:
-                optimizer.step()
 
+                optimizer.step()
                 optimizer.zero_grad()
 
                 print(f"train loss: {loss.item()}, iter time: {iter_time}")
                 
-                # if method=="ffocp_eq":
-                #     print(f"forward_opt_time: {forward_optimization_time_}, backward_opt_time: {backward_optimization_time_}")
-                #     print(f"forward_num_iters: {forward_num_iters}, backward_num_iters: {backward_num_iters}")
-
             print('Forward time {}, backward time {}'.format(forward_time, backward_time))
 
-            # model.eval()
-            # with torch.no_grad():
-            #     for i, (x, y) in enumerate(test_loader):
-            #         # print("batch size : ", x.shape[0])
-            #         z, y_pred = model(x) #opt solution, predicted q
-            #         ts_loss = loss_fn(y_pred, y)
-            #         df_loss = torch.mean(y * z)
+            if method != "dqp":
+                model.eval()
+                with torch.no_grad():
+                    for i, (x, y) in enumerate(test_loader):
+                        x = x.to(device); y = y.to(device)
+                        z, y_pred = model(x)
+                        ts_loss = loss_fn(y_pred, y)
+                        df_loss = torch.mean(y * z)
+                        
+                        test_ts_loss_list.append(ts_loss.item())
+                        test_df_loss_list.append(df_loss.item())
+            else:
+                for i, (x, y) in enumerate(test_loader):
+                    x = x.to(device); y = y.to(device)
+                    z, y_pred = model(x)
+                    ts_loss = loss_fn(y_pred, y)
+                    df_loss = torch.mean(y * z)
                     
-            #         optimizer.zero_grad()
-
-            #         test_ts_loss_list.append(ts_loss.item())
-            #         test_df_loss_list.append(df_loss.item())
-            # model.eval()
-            # for i, (x, y) in enumerate(test_loader):
-            #     # print("batch size : ", x.shape[0])
-            #     z, y_pred = model(x) #opt solution, predicted q
-            #     ts_loss = loss_fn(y_pred, y)
-            #     df_loss = torch.mean(y * z)
-                
-            #     optimizer.zero_grad()
-
-            #     test_ts_loss_list.append(ts_loss.item())
-            #     test_df_loss_list.append(df_loss.item())
-            
-            test_ts_loss_list.append(0)
-            test_df_loss_list.append(0)
+                    test_ts_loss_list.append(ts_loss.item())
+                    test_df_loss_list.append(df_loss.item())
 
 
             train_ts_loss = np.mean(train_ts_loss_list)
@@ -254,12 +218,6 @@ if __name__ == '__main__':
             file.write('{},{},{},{},{},{},{}\n'.format(epoch, train_ts_loss, test_ts_loss, train_df_loss, test_df_loss, forward_time, backward_time))
             file.flush()
             
-            # if method=="ffocp_eq":
-            #     with open(timing_directory + timing_filename, 'a') as timing_file:
-            #         timing_file.write('{},{},{},{},{},{},{}\n'.format(epoch, forward_time, backward_time, forward_optimization_time, backward_optimization_time, pre_autograd_time, autograd_time))
-            #         timing_file.flush()  
-            
             writer.flush()
             
         file.close()
-

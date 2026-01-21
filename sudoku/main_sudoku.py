@@ -35,15 +35,9 @@ def train_test_loop(args, experiment_dir, step_experiment_dir, n, device):
     m = 15
     features = torch.tensor(features, dtype=torch.float32).to(device)[:]#[m:m+1]
     labels   = torch.tensor(labels, dtype=torch.float32).to(device)[:]#[m:m+1]
-    print(features.shape)
-    print(labels.shape)
-    # print(f"15th puzzle: ")
-    # print(decode_onehot(features[0]))
     
-    # Create TensorDataset
     dataset = TensorDataset(features, labels)   
     
-   # Fixed split indices
     num_samples = len(dataset)
     train_split = 0.9 #1
     train_size = int(num_samples * train_split)
@@ -75,17 +69,9 @@ def train_test_loop(args, experiment_dir, step_experiment_dir, n, device):
     time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime())
     
     filename = '{}_n{}_lr{}_seed{}_{time_str}.csv'.format(method, n, learning_rate, seed, time_str=time_str)
-    # if os.path.exists(directory + filename):
-    #     os.remove(directory + filename)
 
-    # if not os.path.exists(directory):
     os.makedirs(directory, exist_ok=True)
     
-    ### record step wise statistics
-    # if os.path.exists(step_experiment_dir + filename):
-    #     os.remove(step_experiment_dir + filename)
-
-    # if not os.path.exists(step_experiment_dir):
     os.makedirs(step_experiment_dir, exist_ok=True)
         
     with open(step_experiment_dir + filename, 'w') as step_file:
@@ -132,7 +118,6 @@ def train_test_loop(args, experiment_dir, step_experiment_dir, n, device):
 
             model.train()
             for i, (x, y) in enumerate(train_loader):
-                # i = 37
                 if i%10==0:
                     print(f"\t\t train example: {i}/{len(train_loader)}")
                 x = x.to(device)

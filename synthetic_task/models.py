@@ -12,8 +12,8 @@ from src.ffolayer.ffocp_eq import FFOLayer
 from ffolayer.ffoqp_eq import FFOQPLayer
 
 from dqp import dQP
-from baselines.qpthlocal.qp import QPFunction
 from baselines.cvxpylayers_local.cvxpylayer import CvxpyLayer
+from baselines.qpthlocal.qp import QPFunction
 from baselines.cvxpylayers_local.cvxpylayer import CvxpyLayer as LPGDLayer
 from baselines.BPQP import BPQPLayer
 from baselines.BPQP_socp import BPQPLayer_socp
@@ -74,8 +74,9 @@ def setup_cvxpy_synthetic_problem(n, n_ineq_constraints, unconstrained=False):
 def setup_cvxpy_synthetic_problem_with_cones(n, n_ineq_constraints, cone_dim, num_cones=30, unconstrained=False):
     Q_cp = cp.Parameter((n, n), PSD=True)
     q_cp = cp.Parameter(n)
-    G_cp = cp.Parameter((n_ineq_constraints, n))
-    h_cp = cp.Parameter(n_ineq_constraints)
+    if not unconstrained:
+        G_cp = cp.Parameter((n_ineq_constraints, n))
+        h_cp = cp.Parameter(n_ineq_constraints)
     z_cp = cp.Variable(n)
 
     objective_fn = 0.5 * cp.sum_squares(Q_cp @ z_cp) + q_cp.T @ z_cp
@@ -87,24 +88,32 @@ def setup_cvxpy_synthetic_problem_with_cones(n, n_ineq_constraints, cone_dim, nu
 
     # === SOC constraints ===
     # constraints.append(cp.SOC(1, z_cp))
-    soc_rhs = 3.0
-    constraints = [
-        cp.SOC(soc_rhs, z_cp[i * cone_dim : (i + 1) * cone_dim])
-        for i in range(num_cones)
-    ]
+
+    # soc_rhs = 10.0
+    # constraints = [
+    #     cp.SOC(soc_rhs, z_cp[i * cone_dim : (i + 1) * cone_dim])
+    #     for i in range(num_cones)
+    # ]
+
+    A_cp = cp.Parameter((num_cones, n))
+    b_cp = cp.Parameter(num_cones) 
+    constraints = []
+    for i in range(num_cones):
+        start_idx = (i * cone_dim) % n
+        end_idx = start_idx + cone_dim if i != num_cones - 1 else n
+        constraints.append(cp.SOC(b_cp[i] - A_cp[i, :] @ z_cp, z_cp[start_idx:end_idx]))
 
     if not unconstrained:
         constraints.append(G_cp @ z_cp <= h_cp)
+        parameters = [Q_cp, q_cp, G_cp, h_cp, A_cp, b_cp]
+    else:
+        parameters = [Q_cp, q_cp, A_cp, b_cp]
 
     problem = cp.Problem(cp.Minimize(objective_fn), constraints)
     assert problem.is_dpp()
 
-    if not unconstrained:
-        parameters = [Q_cp, q_cp, G_cp, h_cp]
-    else:
-        parameters = [G_cp, h_cp]
-
     return problem, objective_fn, constraints, parameters, variables
+
 
 def get_feasible_h(G, z0, s0):
     '''
@@ -134,11 +143,12 @@ class OptModel(nn.Module):
         assert(layer_type in [FFOCP_EQ, CVXPY_LAYER, LPGD, QPTH, LPGD_QP, FFOQP_EQ, FFOQP_EQ_SCHUR, FFOQP_EQ_PARALLELIZE, FFOQP_EQ_PDIPM, BPQP, ALTDIFF, DQP])
         
         self.constraint_learnable = constraint_learnable
+        self.is_QP = is_QP
         self.y_dim = opt_dim
         self.input_dim = input_dim
         self.num_ineq = 2*opt_dim + 1
         self.num_eq = 0
-        self.is_QP = is_QP
+       
         
         self.predictor = MLP(input_dim, self.y_dim)
 
@@ -231,28 +241,37 @@ class OptModel(nn.Module):
                     raise NotImplementedError("Not implemented for layer type: {}".format(layer_type))
         else:
             self.Q = torch.eye(opt_dim).to(device)#.double()
+            # d = torch.logspace(0, 6, steps=opt_dim, device=device)  # cond ~ 1e6
+            # self.Q = torch.diag(d).to(device)
+
             G = torch.cat([torch.eye(opt_dim), -torch.eye(opt_dim), torch.ones(1,opt_dim)], dim=0).to(device)#.double()
             h = torch.cat([torch.zeros(opt_dim), torch.ones(opt_dim), torch.Tensor([3])], dim=0).to(device)#.double()
 
             self.A = torch.Tensor().to(device)
             self.b = torch.Tensor().to(device)
-            self.t = torch.tensor(10.0, device=device) 
-            
+            self.t = torch.tensor(10.0, device=device)
+
+            cone_dim = 2
+            num_cones = 100
+
+            A0 = torch.randn(num_cones, opt_dim, device=device)
+            b0 = torch.ones(num_cones, device=device)
+
+            self.register_buffer("A_soc", A0)
+            self.register_buffer("b_soc", b0)
+                        
             ##### learnable constraints
             if constraint_learnable:
                 self.G = Parameter(torch.rand((self.num_ineq, self.y_dim)))
                 self.z0_g = Parameter(torch.zeros((self.y_dim,)))
                 self.log_s0 = Parameter(torch.rand((self.num_ineq,)))
-                
             else:
                 self.G = G.to(device)
                 self.h = h.to(device)
             
-            cone_dim = max(1, opt_dim // 30)
-            num_cones = 30
-            problem, objective_fn, constraints, params, variables = setup_cvxpy_synthetic_problem_with_cones(opt_dim, self.num_ineq, cone_dim, num_cones)
+            problem, objective_fn, constraints, params, variables = setup_cvxpy_synthetic_problem_with_cones(opt_dim, self.num_ineq, cone_dim, num_cones, unconstrained=True)
             if layer_type==FFOCP_EQ:
-                self.optlayer = FFOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, backward_eps=backward_eps, verbose=True)
+                self.optlayer = FFOLayer(problem, parameters=params, variables=variables, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=slack_tol, eps=1e-12, backward_eps=backward_eps, verbose=False)
             elif layer_type==CVXPY_LAYER:
                 self.optlayer = CvxpyLayer(problem, parameters=params, variables=variables)
             elif layer_type==LPGD:
@@ -320,7 +339,7 @@ class OptModel(nn.Module):
                 params_batched = [Q_batched, q_pred, G_batched, h_batched]
                 
                 if self.layer_type==LPGD:
-                    sol, = self.optlayer(*params_batched, solver_args={"eps": 1e-3}) #, solver_args={"eps": 1e-8, "max_iters": 10000, "acceleration_lookback": 0}
+                    sol, = self.optlayer(*params_batched, solver_args={"eps": 1e-3}) #default eps for lpgd
                 elif self.layer_type==CVXPY_LAYER:
                     sol, = self.optlayer(*params_batched)
                 else:
@@ -328,11 +347,13 @@ class OptModel(nn.Module):
         else:
             if self.layer_type in [FFOCP_EQ, CVXPY_LAYER, LPGD]:
                 Q_batched = self.Q.unsqueeze(0).expand(nBatch, -1, -1)   # (batch, y_dim, y_dim)
-                G_batched = self.G.unsqueeze(0).expand(nBatch, -1, -1)   # (batch, num_ineq, y_dim)
-                h_batched = h.unsqueeze(0).expand(nBatch, -1)       # (batch, num_ineq)
-                # t_batched = self.t.unsqueeze(0).expand(nBatch, -1)   # (batch, y_dim)
+                # G_batched = self.G.unsqueeze(0).expand(nBatch, -1, -1)   # (batch, num_ineq, y_dim)
+                # h_batched = h.unsqueeze(0).expand(nBatch, -1)       # (batch, num_ineq)
+                A_batched = self.A_soc.unsqueeze(0).expand(nBatch, -1, -1)   # (batch, num_cones, y_dim)
+                b_batched = self.b_soc.unsqueeze(0).expand(nBatch, -1)   # (batch, num_cones)
                 
-                params_batched = [Q_batched, q_pred, G_batched, h_batched]
+                params_batched = [Q_batched, q_pred, A_batched, b_batched]
+
                 sol = self.optlayer(*params_batched)
                 if isinstance(sol, tuple):
                     sol = sol[0]

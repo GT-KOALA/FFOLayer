@@ -5,10 +5,10 @@ cd "$SCRIPT_DIR/.."
 
 # seeds=($(seq 1 5))
 # seeds=($(seq 1 1 5))
-seeds=(11)
+seeds=($(seq 12 1 15))
 
-# ydims=($(seq 200 100 1000))
-ydims=(200)
+ydims=($(seq 200 100 1000))
+# ydims=(200)
 
 batchSize=8
 
