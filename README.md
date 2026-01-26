@@ -140,10 +140,10 @@ sh scripts/loop_synthetic_general_per_seed.sh
 ```
 If not, please use:
 ```
-python synthetic_task/main_synthetic.py --method ffocp_eq --ydim 800 --epoch 1 --batch_size 8
-python synthetic_task/main_synthetic.py --method lpgd --ydim 800 --epoch 1 --batch_size 8
-python synthetic_task/main_synthetic.py --method cvxpylayer --ydim 800 --epoch 1 --batch_size 8
-python synthetic_task/main_synthetic.py --method bpqp --ydim 800 --epoch 1 --batch_size 8
+python synthetic_task/main_synthetic_general.py --method ffocp_eq --ydim 800 --epoch 1 --batch_size 8
+python synthetic_task/main_synthetic_general.py --method lpgd --ydim 800 --epoch 1 --batch_size 8
+python synthetic_task/main_synthetic_general.py --method cvxpylayer --ydim 800 --epoch 1 --batch_size 8
+python synthetic_task/main_synthetic_general.py --method bpqp --ydim 800 --epoch 1 --batch_size 8
 ```
 
 ---
