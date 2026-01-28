@@ -179,7 +179,7 @@ def plot_time_vs_epoch(df, time_names=['forward_time', 'backward_time'], iterati
 
 def plot_total_time_vs_method(
     df,
-    task_title_tag,
+    task_title_tag=None,
     time_names=["forward_time", "backward_time"],
     plot_path=BASE_DIR,
     plot_name_tag="",
@@ -283,7 +283,10 @@ def plot_total_time_vs_method(
     methods = ["Cvxpy\nLayer" if m == "CvxpyLayer" else m for m in methods]
     ax.set_xticklabels(methods)
     ax.set_ylabel("Time")
-    ax.set_title(f"{task_title_tag}: Total Time vs Methods")
+    if task_title_tag is not None:
+        ax.set_title(f"{task_title_tag}: Total Time vs Methods")
+    else:
+        ax.set_title("Total Time vs Methods")
     ax.set_ylim(min_time, y_max)
     min_x = min([min(x), min(label_x)])
     max_x = max([max(x), max(label_x)])
@@ -324,7 +327,7 @@ def plot_total_time_vs_method(
     fig.savefig(f"{plot_path}/{plot_name_tag}_total_time_vs_method.pdf", dpi=300, bbox_inches="tight")
     plt.close(fig)
     
-def plot_loss_vs_epoch(df, loss_metric_name, task_title_tag, iteration_name='epoch', plot_path=BASE_DIR, plot_name_tag="", loss_range=None, stride=50):
+def plot_loss_vs_epoch(df, loss_metric_name, task_title_tag=None, iteration_name='epoch', plot_path=BASE_DIR, plot_name_tag="", loss_range=None, stride=50):
     df_avg_epoch = df.groupby(['method', iteration_name])[[loss_metric_name]].mean().reset_index()
     
     # print(df_avg_epoch)
@@ -336,8 +339,10 @@ def plot_loss_vs_epoch(df, loss_metric_name, task_title_tag, iteration_name='epo
     plt.figure(figsize=(8,5))
     ax = sns.lineplot(data=df_avg_epoch, x=iteration_name, y=loss_metric_name, hue='method', dashes=False, linewidth=LINEWIDTH, hue_order=method_order)
     plt.ylabel("loss")
-    plt.title(f"{task_title_tag}: Loss vs iteration")
-    
+    if task_title_tag is not None:
+        plt.title(f"{task_title_tag}: Loss vs iteration")
+    else:
+        plt.title("Loss vs iteration")
     
     # plt.legend(
     #     title=None,
@@ -404,7 +409,15 @@ def plot_total_time_vs_ydim_for_methods(
     plt.xlabel("y_dim")
     plt.ylabel("Total Time")
     plt.title("Total Time vs y_dim (selected methods)")
-    plt.legend()
+    
+    # Reorder legend items to: CvxpyLayer, qpth, LPGD, BPQP, dQP, FFOCP, FFOQP
+    legend_order = ["CvxpyLayer", "qpth", "LPGD", "BPQP", "dQP", "FFOCP", "FFOQP"]
+    handles, labels = plt.gca().get_legend_handles_labels()
+    label_to_handle = dict(zip(labels, handles))
+    ordered_handles = [label_to_handle[l] for l in legend_order if l in label_to_handle]
+    ordered_labels = [l for l in legend_order if l in label_to_handle]
+    plt.legend(ordered_handles, ordered_labels, ncol=len(ordered_labels))
+    
     plt.tight_layout()
     plt.savefig(
         f"{plot_path}/{plot_name_tag}_total_time_vs_ydim.pdf",
@@ -524,8 +537,8 @@ def plot_time_scaling_vs_ydim(
         methods_order = [m for m in methods_order if m in g["method"].unique()]
 
     plt.rcParams.update({
-        "font.size": 13, "axes.titlesize": 14, "axes.labelsize": 13,
-        "legend.fontsize": 11, "xtick.labelsize": 12, "ytick.labelsize": 12,
+        "font.size": 18, "axes.titlesize": 20, "axes.labelsize": 18,
+        "legend.fontsize": 16, "xtick.labelsize": 16, "ytick.labelsize": 16,
     })
 
     fig, axes = plt.subplots(1, 3, figsize=(15.5, 4.2), sharex=True)
@@ -535,22 +548,19 @@ def plot_time_scaling_vs_ydim(
         (time_names[1], "Backward time"),
     ]
 
-    dashed_methods = set(dashed_methods)
-
     for ax, (col, title) in zip(axes, panels):
         for i, method in enumerate(methods_order):
             gg = g[g["method"] == method].sort_values("ydim")
             if gg.empty:
                 continue
 
-            is_dashed = method in dashed_methods
             ax.plot(
                 gg["ydim"], gg[col],
                 label=method,
                 marker=markers_dict.get(method, markers[i % len(markers)]),
                 markersize=5.5,
-                linewidth=2.2 if is_dashed else 2.0,
-                linestyle=(0, (4, 2)) if is_dashed else "solid",
+                linewidth=2.0,
+                linestyle="solid",
             )
 
         ax.set_title(title)
@@ -570,22 +580,26 @@ def plot_time_scaling_vs_ydim(
 
     axes[0].set_ylabel("time (s)")
 
+    # Reorder legend items to: CvxpyLayer, qpth, LPGD, BPQP, dQP, FFOCP, FFOQP (single row)
+    legend_order = ["CvxpyLayer", "qpth", "LPGD", "BPQP", "dQP", "FFOCP", "FFOQP"]
     handles, labels = axes[0].get_legend_handles_labels()
-    ncol = min(len(labels), 4) 
+    label_to_handle = dict(zip(labels, handles))
+    ordered_handles = [label_to_handle[l] for l in legend_order if l in label_to_handle]
+    ordered_labels = [l for l in legend_order if l in label_to_handle]
     fig.legend(
-        handles, labels,
+        ordered_handles, ordered_labels,
         loc="lower center",
-        bbox_to_anchor=(0.5, -0.02),
-        fontsize=14,
-        ncol=ncol,
+        bbox_to_anchor=(0.5, 0.02),
+        fontsize=18,
+        ncol=len(ordered_labels),
         frameon=False,
         handlelength=2.4,
         handletextpad=0.6,
-        columnspacing=1.2,
+        columnspacing=1.0,
     )
 
     # leave space at bottom for legend
-    fig.tight_layout(rect=[0, 0.12, 1, 1])
+    fig.tight_layout(rect=[0, 0.10, 1, 1])
 
     out = os.path.join(plot_path, f"{plot_name_tag}_time_scaling_vs_ydim.pdf")
     fig.savefig(out, dpi=300, bbox_inches="tight")
