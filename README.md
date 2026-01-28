@@ -1,16 +1,18 @@
 # FFOLayer — A Fully First-Order Layer for Differentiable Optimization
 
-FFOLayer is a PyTorch-friendly library for **differentiable optimization layers** that computes hypergradients using **only first-order information**. It is designed as a practical, drop-in alternative to implicit-differentiation-based layers when memory or backward-time is the bottleneck.
+`FFOLayer` is a PyTorch-friendly library for **differentiable optimization layers** that computes hypergradients using **only first-order information**. It is designed as a practical, drop-in alternative to implicit-differentiation-based layers when memory or backward-time is the bottleneck.
 
 ---
 ## Installation
-To install FFOLayer, please use:
-```
+FFOLayer is available on pip:
+
+```bash
 pip install ffolayer
 ```
+
 You may also need to install cvxtorch:
 
-```
+```bash
 git clone https://github.com/cvxpy/cvxtorch.git
 cd cvxtorch
 pip install -e .
@@ -18,9 +20,50 @@ pip install -e .
 
 ---
 
-## Quick Start
+## Usage
 
-FFOLayer is designed to be a drop-in replacement for differentiable layers like [CvxpyLayer](https://github.com/cvxpy/cvxpylayers/) (same “define CVXPY problem → wrap as layer → call in PyTorch” workflow).
+FFOLayer follows the same workflow as differentiable layers like `cvxpylayers`:
+
+> define a CVXPY problem → wrap it as a layer → call it in PyTorch → backprop
+
+### API
+
+#### `FFOLayer(problem, parameters, variables, eps=..., **kwargs)`
+
+**Arguments**
+- `problem`: a `cvxpy.Problem` (must satisfy DPP when using CVXPY parameters).
+- `parameters`: CVXPY `Parameter` (the inputs to the layer).
+- `variables`: CVXPY `Variable` (the outputs returned by the layer).
+- `alpha`: perturbation scale (\delta in Eq.4) used in the finite-difference hypergradient approximation. Bigger alpha leads to a smaller delta: less bias, more numerical noise.
+- `eps`: solver tolerence for forward pass
+- `backward_eps`: solver tolerence for backward pass
+- `max_workers`: maximum number of worker threads/processes used to parallelize solver calls 
+
+#### Calling the layer
+```python
+(outputs,) = layer(*torch_parameters, solver_args={...})
+```
+
+**Arguments**
+- `*torch_parameters`: PyTorch tensors matching `parameters` in shape (optionally batched).
+- `solver_args` (optional): forwarded to `problem.solve(...)` inside CVXPY.
+
+**Return value**
+- A tuple of PyTorch tensors corresponding to `variables`.
+
+
+### Solver-agnostic differentiation!!!
+
+FFOLayer is **solver-agnostic**: it treats the solver as a **black box** and computes hypergradients by re-solving **perturbed** problems, instead of differentiating through solver internals.  
+This means you can use **any CVXPY solver** (e.g., GUROBI, MOSEK, ECOS, SCS) without requiring custom backward implementations.
+
+```python
+(solution,) = layer(*torch_parameters, solver_args={"solver": cp.GUROBI, "eps": 1e-5})
+```
+
+
+
+#### Example
 
 ```python
 import torch
@@ -55,7 +98,7 @@ solution.sum().backward()
 - `sudoku/`: Sudoku as an optimization layer benchmark
 - `baselines/`: reference baselines used in experiments
 - `tests/`: basic checks / utilities
-- `plot_results_*.ipynb`: plot figures in paper 
+- `plot_results_*.ipynb`: notebooks for plotting paper figures
 
 ### Variants in this repo
 
@@ -63,18 +106,6 @@ We provide two main variants (same core idea, different specialization):
 
 - **FFOCP:** applies to general convex programs.
 - **FFOQP:** specializes to QP layers, exploiting quadratic structure for efficiency.
-
----
-## Solver
-
-FFOLayer is **solver-agnostic**: it calls a black-box solver for the original and perturbed problems, rather than differentiating through solver internals. Therefore, it supports all solvers in CVXPY like [GUROBI](https://www.gurobi.com/) and [MOSEK](https://www.mosek.com/).
-
-### Passing arguments to the solvers
-You can forward solver options to CVXPY’s `prob.solve(...)`:
-
-```python
-x_star = layer(*parameters, solver_args={"solver": cp.GUROBI, "eps": 1e-5})
-```
 
 
 ---
@@ -87,11 +118,11 @@ x_star = layer(*parameters, solver_args={"solver": cp.GUROBI, "eps": 1e-5})
   - `models.py`: all models' definitions and settings
 
 To run the code, if your cluster supports SLURM, please use:
-```
+```bash
 sh scripts/loop_synthetic_per_seed.sh
 ```
 If not, please use:
-```
+```bash
 python synthetic_task/main_synthetic.py --method ffocp_eq --ydim 800 --epoch 1 --batch_size 8
 python synthetic_task/main_synthetic.py --method ffoqp_eq --ydim 800 --epoch 1 --batch_size 8
 python synthetic_task/main_synthetic.py --method lpgd --ydim 800 --epoch 1 --batch_size 8
@@ -101,6 +132,10 @@ python synthetic_task/main_synthetic.py --method bpqp --ydim 800 --epoch 1 --bat
 python synthetic_task/main_synthetic.py --method dqp --ydim 800 --epoch 1 --batch_size 8
 ```
 
+To plot the results, please run `plot_results_synthetic.ipynb`.
+
+```
+
 ---
 ## 2) Sudoku task
 **Key files**
@@ -108,11 +143,11 @@ python synthetic_task/main_synthetic.py --method dqp --ydim 800 --epoch 1 --batc
   - `models_sudoku.py`: all models' definitions and settings
 
 To run the code, if your cluster supports SLURM, please use:
-```
+```bash
 sh scripts/loop_sudoku_per_seed.sh
 ```
 If not, please use:
-```
+```bash
 python sudoku/main_sudoku.py --method ffocp_eq --n 3 --epoch 1 --batch_size 8
 python sudoku/main_sudoku.py --method ffoqp_eq --n 3 --epoch 1 --batch_size 8
 python sudoku/main_sudoku.py --method lpgd --n 3 --epoch 1 --batch_size 8
@@ -123,7 +158,7 @@ python sudoku/main_sudoku.py --method dqp --n 3 --epoch 1 --batch_size 8
 ```
 
 To plot the results, please use
-```
+```bash
 python sudoku/plot_results.py
 ```
 
@@ -135,16 +170,18 @@ python sudoku/plot_results.py
 - `models.py`: all models' definitions and settings
 
 To run the code, if your cluster supports SLURM, please use:
-```
+```bash
 sh scripts/loop_synthetic_general_per_seed.sh
 ```
 If not, please use:
-```
+```bash
 python synthetic_task/main_synthetic_general.py --method ffocp_eq --ydim 800 --epoch 1 --batch_size 8
 python synthetic_task/main_synthetic_general.py --method lpgd --ydim 800 --epoch 1 --batch_size 8
 python synthetic_task/main_synthetic_general.py --method cvxpylayer --ydim 800 --epoch 1 --batch_size 8
 python synthetic_task/main_synthetic_general.py --method bpqp --ydim 800 --epoch 1 --batch_size 8
 ```
+
+To plot the results, please run `plot_results_synthetic.ipynb`.
 
 ---
 
