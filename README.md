@@ -22,9 +22,9 @@ pip install -e .
 
 ## Usage
 
-FFOLayer follows the same workflow as differentiable layers like `cvxpylayers`:
+FFOLayer follows the same workflow as differentiable layers like [CvxpyLayer](https://github.com/cvxpy/cvxpylayers/):
 
-> define a CVXPY problem → wrap it as a layer → call it in PyTorch → backprop
+> define a [CVXPY](https://github.com/cvxpy/cvxpy) problem → wrap it as a layer → call it in PyTorch → backprop
 
 ### API
 
@@ -134,10 +134,10 @@ python synthetic_task/main_synthetic.py --method dqp --ydim 800 --epoch 1 --batc
 
 To plot the results, please run `plot_results_synthetic.ipynb`.
 
-```
 
 ---
-## 2) Sudoku task
+
+### 2) Sudoku task
 **Key files**
   - `sudoku/main_sudoku.py`: entrypoint for all methods
   - `models_sudoku.py`: all models' definitions and settings
@@ -164,7 +164,7 @@ python sudoku/plot_results.py
 
 ---
 
-## 3) `Synthetic Second-order Cone Progrem (SOCP))`
+### 3) `Synthetic Second-order Cone Progrem (SOCP))`
 **Key files**
 - `synthetic_task/main_synthetic_general.py`: entrypoint for all methods
 - `models.py`: all models' definitions and settings
