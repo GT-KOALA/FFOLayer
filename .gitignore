@@ -13,5 +13,4 @@ output/*
 *copy*
 *logs*
 *cvxpy_logs*
-*.sbatch
 *dist*
