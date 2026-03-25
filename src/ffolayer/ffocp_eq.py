@@ -346,7 +346,10 @@ def _build_problem_bundle(
     ])
 
     new_objective = (1.0 / float(alpha)) * vars_dvars_product + objective_expr
-    new_objective += scalar_ineq_dual_product + soc_dual_product + exp_dual_product + psd_dual_product
+    new_objective += scalar_ineq_dual_product + soc_dual_product + exp_dual_product
+    # Note: psd_dual_product is intentionally NOT added to the perturbed objective.
+    # For PSD cones, keeping them as explicit constraints in the perturbed problem
+    # lets the solver handle the conic geometry directly.
 
     active_eq_constraints = [
         cp.multiply(scalar_active_mask_params[j], scalar_ineq_funcs[j]) == 0
@@ -355,7 +358,7 @@ def _build_problem_bundle(
 
     perturbed_problem = cp.Problem(
         cp.Minimize(new_objective),
-        eq_constraints + active_eq_constraints + soc_lin_constraints + pnorm_tangent_constraints,
+        eq_constraints + active_eq_constraints + soc_lin_constraints + pnorm_tangent_constraints + psd_cones,
     )
 
     # ---- TorchExpressions for loss pieces (phi and dual terms) ----
@@ -647,6 +650,10 @@ class _FFOLayer(torch.nn.Module):
             vnames = [v.name() for v in self._var_templates]
 
             problem_list, parameters_list, variables_list = [], [], []
+            # Clear solver cache before deepcopy – solver objects are not picklable
+            saved_cache = getattr(self._problem_proto, '_solver_cache', None)
+            if saved_cache is not None:
+                self._problem_proto._solver_cache = {}
             for _ in range(int(B)):
                 prob_i = copy.deepcopy(self._problem_proto)
                 pmap = prob_i.param_dict
@@ -656,6 +663,8 @@ class _FFOLayer(torch.nn.Module):
                 problem_list.append(prob_i)
                 parameters_list.append(params_i)
                 variables_list.append(vars_i)
+            if saved_cache is not None:
+                self._problem_proto._solver_cache = saved_cache
 
         self.num_problems = len(problem_list)
         if self.num_problems == 0:
@@ -969,7 +978,10 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
             def _slice_dvars_np(i: int):
                 if ctx.batch:
                     return [arr[i] for arr in dvars_np_all]
-                return dvars_np_all
+                # Even when not batched, sol_numpy has leading B=1 dim,
+                # so dvars also has shape (1, *v.shape). Slice it out.
+                return [arr[i] if arr.ndim > len(v.shape) else arr
+                        for arr, v in zip(dvars_np_all, ref["variables"])]
 
             y_dim = int(np.prod((_slice_dvars_np(0)[0]).shape))
             num_eq = int(np.prod(ctx.eq_dual[0][0].shape)) if (len(ctx.eq_dual) > 0 and ctx.batch) else (
