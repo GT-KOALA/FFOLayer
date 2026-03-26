@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=16              # single node, 16 cores
 #SBATCH --mem-per-cpu=16G                 # memory per core
 #SBATCH -t 360                           # duration of the job
-#SBATCH --output=/storage/home/hcoda1/9/zzhao628/scratch/bilevel-layer/logs/sudoku_ffocp.log
+#SBATCH --output=/storage/home/hcoda1/3/sho73/r-kwang692-0/project/logs/sudoku_ffocp.log
 
 # module load anaconda3/2022.05.0.1
 # module load cuda/11.7.0-7sdye3
@@ -14,7 +14,8 @@
 
 # conda activate rl
 
-cd /storage/home/hcoda1/9/zzhao628/scratch/bilevel-layer
+# cd /storage/home/hcoda1/9/zzhao628/scratch/bilevel-layer
+cd /storage/home/hcoda1/3/sho73/r-kwang692-0/project/FFOLayer
 
 echo echo
 echo $METHOD
@@ -24,6 +25,7 @@ echo $EPS
 echo $LR
 echo $BATCH_SIZE
 
-export GRB_LICENSE_FILE=/storage/home/hcoda1/9/zzhao628/gurobi.lic
+# export GRB_LICENSE_FILE=/storage/home/hcoda1/9/zzhao628/gurobi.lic
+export GRB_LICENSE_FILE=/storage/home/hcoda1/3/sho73/r-kwang692-0/gurobi.lic
 
 python3 sudoku/main_sudoku.py --method=ffocp_eq --n 3 --batch_size 8 --epochs 1

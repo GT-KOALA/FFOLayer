@@ -731,6 +731,7 @@ class _FFOLayer(torch.nn.Module):
             default_solver_args = dict(ignore_dpp=False)
 
         solver_args = {**default_solver_args, **solver_args}
+        solver_args["warm_start"] = False
 
         if not self._initialized:
             B = self._infer_B_from_params(params)

@@ -43,7 +43,9 @@ METHODS = [
     "bpqp",
     "dqp",
     "ffocp_eq",
-    "ffoqp_eq_schur"  
+    "ffoqp_eq_schur",
+    "ffocp_eq_warm",
+    "ffocp_eq_no"
 ]
 METHODS_LEGEND = {
     "cvxpylayer": "CvxpyLayer",
@@ -53,6 +55,8 @@ METHODS_LEGEND = {
     "dqp": "dQP",
     "qpth": "qpth",
     "ffoqp_eq_schur": "FFOQP",
+    "ffocp_eq_warm": "FFOCP (warm start)",
+    "ffocp_eq_no": "FFOCP (no warm start)",
 }
 
 METHODS_STEPS = [method+"_steps" for method in METHODS]
@@ -60,7 +64,7 @@ METHODS_STEPS = [method+"_steps" for method in METHODS]
 method_order = [METHODS_LEGEND[m] for m in METHODS]
 
 markers = ["o", "s", "D", "^", "v", "x", "P", "s", "D"]
-markers_dict = {method: markers[i] for i, method in enumerate(method_order)}
+# markers_dict = {method: markers[i] for i, method in enumerate(method_order)}
 
 LINEWIDTH = 1.5
 
@@ -259,7 +263,7 @@ def plot_total_time_vs_method(
     groups = [
         ["CvxpyLayer", "qpth"], # KKT based
         ["LPGD","BPQP", "dQP"], # optimization based
-        ["FFOCP", "FFOQP"], # our methods
+        ["FFOCP", "FFOQP", "FFOCP (warm start)", "FFOCP (no warm start)"], # our methods
     ]
     
     # assert groups respect the filtered method order
@@ -376,12 +380,14 @@ def plot_total_time_vs_method(
 
 def plot_losse_vs_epoch(df, loss_metric_name, iteration_name='epoch', plot_path=BASE_DIR, plot_name_tag="", loss_range=None, stride=50,
     task_title_tag="Sudoku"):
-    df_avg_epoch = df.groupby(['method', iteration_name])[[loss_metric_name]].mean().reset_index()
+    df_avg_epoch = df.groupby(['method', iteration_name], observed=True)[[loss_metric_name]].mean().reset_index()
     # df_avg_epoch = df_avg_epoch[df_avg_epoch[iteration_name] % stride == 0]
 
+    observed_methods = df_avg_epoch['method'].dropna().unique().tolist()
+    
     # --- Forward Time Figure ---
     plt.figure(figsize=(8,5))
-    ax = sns.lineplot(data=df_avg_epoch, x=iteration_name, y=loss_metric_name, hue='method', dashes=False, linewidth=LINEWIDTH, hue_order=method_order)
+    ax = sns.lineplot(data=df_avg_epoch, x=iteration_name, y=loss_metric_name, hue='method', dashes=False, linewidth=LINEWIDTH, hue_order=observed_methods)
     plt.ylabel("loss")
     plt.title(f"{task_title_tag}: Loss vs iteration")
     
