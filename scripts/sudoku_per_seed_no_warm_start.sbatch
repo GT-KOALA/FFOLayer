@@ -33,5 +33,5 @@ n=2
 methods=("ffocp_eq")
 for method in "${methods[@]}"; do
     echo "Running method=$method, seed=$seed"
-    python sudoku/main_sudoku.py --method=$method --seed=$seed --epochs=$epochs --batch_size=$batchSize --n=$n --warm_start
+    python sudoku/main_sudoku.py --method=$method --seed=$seed --epochs=$epochs --batch_size=$batchSize --n=$n
 done

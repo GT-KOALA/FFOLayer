@@ -60,7 +60,7 @@ def train_test_loop(args, experiment_dir, step_experiment_dir, n, device):
     alpha = args.alpha
     dual_cutoff = args.dual_cutoff
     Qpenalty = 0.1
-    model = SingleOptLayerSudoku(n, learnable_parts=['eq'], layer_type=method, Qpenalty=Qpenalty, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=args.slack_tol, batch_size=batch_size)
+    model = SingleOptLayerSudoku(n, learnable_parts=['eq'], layer_type=method, Qpenalty=Qpenalty, alpha=alpha, dual_cutoff=dual_cutoff, slack_tol=args.slack_tol, batch_size=batch_size, warm_start=args.warm_start)
     model = model.to(device)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0)
@@ -262,6 +262,7 @@ if __name__ == '__main__':
     parser.add_argument('--alpha', type=float, default=100, help='alpha')
     parser.add_argument('--dual_cutoff', type=float, default=1e-3, help='dual cutoff')
     parser.add_argument('--slack_tol', type=float, default=1e-8, help='slack tolerance')
+    parser.add_argument('--warm_start', action='store_true', help='warm start')
 
     parser.add_argument('--device', type=str, default='cuda:0', help='device')
     

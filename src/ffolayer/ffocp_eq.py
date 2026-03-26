@@ -566,7 +566,6 @@ class _FFOLayer(torch.nn.Module):
         self._ref_param_order = None
         self._ref_vars = None
         self._ws_primal_fwd = None
-        self._ws_primal_bwd = None
         self._executor = None
 
         self.forward_solve_time = 0.0
@@ -693,7 +692,6 @@ class _FFOLayer(torch.nn.Module):
         self._ref_vars = bundles[0]["variables"]
 
         self._ws_primal_fwd = [None] * self.num_problems
-        self._ws_primal_bwd = [None] * self.num_problems
 
         self._executor = ThreadPoolExecutor(max_workers=self.max_workers)
 
@@ -731,7 +729,7 @@ class _FFOLayer(torch.nn.Module):
             default_solver_args = dict(ignore_dpp=False)
 
         solver_args = {**default_solver_args, **solver_args}
-        solver_args["warm_start"] = False
+        self._warm_start = bool(solver_args.get("warm_start", False))
 
         if not self._initialized:
             B = self._infer_B_from_params(params)
@@ -740,8 +738,8 @@ class _FFOLayer(torch.nn.Module):
         self._solver_args_fwd = dict(solver_args)
 
         self._solver_args_bwd = dict(solver_args)
-        self._solver_args_bwd["warm_start"] = False
         self._solver_args_bwd["max_iters"] = 2500
+        self._solver_args_bwd["warm_start"] = True
         if "eps" in self._solver_args_bwd:
             self._solver_args_bwd["eps"] = float(self.backward_eps)
 
@@ -832,6 +830,8 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                     return [p[i] if bs > 0 else p for p, bs in zip(params, ctx.batch_sizes)]
                 return list(params)
 
+            fwd_solver_iters = [0] * B
+
             def _solve_one(i: int):
                 b = ctx.bundles[i]
                 prob = mt.problem_list[i]
@@ -840,14 +840,14 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                 for pval, pparam in zip(params_i_np, b["param_order"]):
                     pparam.value = pval
 
-                ws_fwd = getattr(mt, "_ws_primal_fwd", None)
-                if ws_fwd is not None and ws_fwd[i] is not None:
-                    try:
-                        for v_id, v in enumerate(b["variables"]):
-                            v.value = ws_fwd[i][v_id]
-                    except Exception as e:
-                        print(f"[forward] problem {i} failed to access variable {v_id} value: {e!r}")
-                        pass
+                if mt._warm_start:
+                    ws_fwd = getattr(mt, "_ws_primal_fwd", None)
+                    if ws_fwd is not None and ws_fwd[i] is not None:
+                        try:
+                            for v_id, v in enumerate(b["variables"]):
+                                v.value = ws_fwd[i][v_id]
+                        except Exception as e:
+                            print(f"[forward] problem {i} failed to access variable {v_id} value: {e!r}")
                 
                 try:
                     # mt._solver_args_fwd['verbose'] = True
@@ -859,19 +859,22 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                     except Exception as e2:
                         raise RuntimeError(f"[forward] problem {i} solve failed: {e!r} {e2!r}")
                 
-                # print("solver used for forward pass:", prob.solver_stats.solver_name)
-
                 if prob.status not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
                     raise RuntimeError(f"[forward] problem {i} status: {prob.status}")
+
+                if prob.solver_stats is not None:
+                    fwd_solver_iters[i] = getattr(prob.solver_stats, 'num_iters', 0)
 
                 for v_id, v in enumerate(b["variables"]):
                     sol_numpy[v_id][i, ...] = v.value
 
-                if ws_fwd is not None:
-                    try:
-                        ws_fwd[i] = [np.array(v.value, dtype=float, copy=True) for v in b["variables"]]
-                    except Exception:
-                        pass
+                if mt._warm_start:
+                    ws_fwd = getattr(mt, "_ws_primal_fwd", None)
+                    if ws_fwd is not None:
+                        try:
+                            ws_fwd[i] = [np.array(v.value, dtype=float, copy=True) for v in b["variables"]]
+                        except Exception:
+                            pass
 
                 for c_id, c in enumerate(b["eq_constraints"]):
                     eq_dual[c_id][i, ...] = c.dual_value
@@ -926,6 +929,10 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                 # single thread for debugging
                 # for i in range(B):
                 #     _solve_one(i) 
+
+            if mt.verbose:
+                total_fwd = sum(fwd_solver_iters)
+                print(f"[forward] solver iters: total={total_fwd}, avg={total_fwd/max(B,1):.1f}")
 
             ctx.sol_numpy = sol_numpy
             ctx.eq_dual = eq_dual
@@ -1009,6 +1016,8 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                     return [p[i] if bs > 0 else p for p, bs in zip(params_src, ctx.batch_sizes)]
                 return list(params_src)
 
+            bwd_solver_iters = [0] * B
+
             def _solve_perturbed_one(i: int):
                 b = bundles[i]
                 prob = mt.perturbed_problem_list[i]
@@ -1018,16 +1027,9 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                     pparam.value = pval
 
                 dvals_i = _slice_dvars_np(i)
-                ws_bwd = getattr(mt, "_ws_primal_bwd", None)
                 for j, v in enumerate(b["variables"]):
                     b["dvar_params"][j].value = dvals_i[j]
-                    if ws_bwd is not None and ws_bwd[i] is not None:
-                        try:
-                            v.value = ws_bwd[i][j]
-                        except Exception:
-                            v.value = ctx.sol_numpy[j][i, ...]
-                    else:
-                        v.value = ctx.sol_numpy[j][i, ...]
+                    v.value = ctx.sol_numpy[j][i, ...]
 
                 for j in range(len(b["eq_functions"])):
                     b["eq_dual_params"][j].value = ctx.eq_dual[j][i]
@@ -1093,19 +1095,14 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                     except Exception as e2:
                         raise RuntimeError(f"[backward] problem {i} perturbed solve failed: {e!r} {e2!r}")
                 
-                # print("solver used for backward pass:", prob.solver_stats.solver_name)
-
                 if prob.status not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
                     raise RuntimeError(f"[backward] perturbed problem {i} status: {prob.status}")
 
+                if prob.solver_stats is not None:
+                    bwd_solver_iters[i] = getattr(prob.solver_stats, 'num_iters', 0)
+
                 for j, v in enumerate(b["variables"]):
                     new_sol_lagrangian[j][i, ...] = v.value
-
-                if ws_bwd is not None:
-                    try:
-                        ws_bwd[i] = [np.array(v.value, dtype=float, copy=True) for v in b["variables"]]
-                    except Exception:
-                        pass
 
                 for c_id, c in enumerate(b["eq_constraints"]):
                     new_eq_dual[c_id][i, ...] = c.dual_value
@@ -1139,6 +1136,10 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                 futs = [mt._executor.submit(_solve_perturbed_one, i) for i in range(B)]
                 for f in futs:
                     f.result()
+
+            if mt.verbose:
+                total_bwd = sum(bwd_solver_iters)
+                print(f"[backward] solver iters: total={total_bwd}, avg={total_bwd/max(B,1):.1f}")
 
             new_sol = [to_torch(v, ctx.dtype, ctx.device) for v in new_sol_lagrangian]
             vars_old = [to_torch(ctx.sol_numpy[j], ctx.dtype, ctx.device) for j in range(num_vars)]

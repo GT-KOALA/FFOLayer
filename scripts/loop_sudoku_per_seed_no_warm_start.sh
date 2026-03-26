@@ -8,8 +8,8 @@ cd "$SCRIPT_DIR/.."
 seeds=(1)
 
 for seed in "${seeds[@]}"; do
-    jobname="sudoku_seed${seed}"
-    sbatch --job-name=$jobname scripts/sudoku_per_seed.sbatch $seed
+    jobname="sudoku_seed${seed}_no_warm_start"
+    sbatch --job-name=$jobname scripts/sudoku_per_seed_no_warm_start.sbatch $seed
     echo "Submitted: $jobname"
 done
 

@@ -87,7 +87,7 @@ def get_Q_from_L(self, L, eps):
     return Q
 
 class SingleOptLayerSudoku(nn.Module):
-    def __init__(self, n, learnable_parts, layer_type, Qpenalty=0.1, alpha=100, init_learnable_vals=None, dual_cutoff=1e-3, slack_tol=1e-6, batch_size=32):
+    def __init__(self, n, learnable_parts, layer_type, Qpenalty=0.1, alpha=100, init_learnable_vals=None, dual_cutoff=1e-3, slack_tol=1e-6, batch_size=32, warm_start=True):
         '''
         The architecture is {parameter - optLayer}.
         
@@ -107,7 +107,8 @@ class SingleOptLayerSudoku(nn.Module):
         assert(layer_type in [QPTH, FFOCP_EQ, FFOQP_EQ_SCHUR, LPGD, CVXPY_LAYER, FFOQP_EQ, LPGD_QP, BPQP, DQP, ALTDIFF])
        
         param_vals = get_default_sudoku_params(n, Qpenalty=Qpenalty, get_equality=True)
-        
+        self.warm_start = warm_start
+
         self.y_dim = (n**2)**3
         self.num_ineq = param_vals["G"].shape[0]
         self.num_eq = param_vals["A"].shape[0]
@@ -251,6 +252,8 @@ class SingleOptLayerSudoku(nn.Module):
                 solver_args={"mode": "lsqr", "max_iters": 100, "eps": 1e-6,}
                 sol, = self.optlayer(*params_batched, solver_args=solver_args)
                 # sol, = self.optlayer(*params_batched)
+            elif self.layer_type==FFOCP_EQ:
+                sol, = self.optlayer(*params_batched, solver_args={"warm_start": self.warm_start})
             else:
                 sol, = self.optlayer(*params_batched)
             
