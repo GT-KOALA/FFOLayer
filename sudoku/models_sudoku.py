@@ -253,7 +253,12 @@ class SingleOptLayerSudoku(nn.Module):
                 sol, = self.optlayer(*params_batched, solver_args=solver_args)
                 # sol, = self.optlayer(*params_batched)
             elif self.layer_type==FFOCP_EQ:
-                sol, = self.optlayer(*params_batched, solver_args={"warm_start": self.warm_start})
+                ws_keys = None
+                if self.warm_start:
+                    with torch.no_grad():
+                        p_np = p.detach().cpu().numpy()
+                        ws_keys = [hash(p_np[i].tobytes()) for i in range(nBatch)]
+                sol, = self.optlayer(*params_batched, solver_args={"warm_start": self.warm_start, "ws_keys": ws_keys})
             else:
                 sol, = self.optlayer(*params_batched)
             

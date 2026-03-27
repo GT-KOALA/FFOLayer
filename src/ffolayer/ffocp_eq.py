@@ -691,7 +691,10 @@ class _FFOLayer(torch.nn.Module):
         self._ref_param_order = bundles[0]["param_order"]
         self._ref_vars = bundles[0]["variables"]
 
-        self._ws_primal_fwd = [None] * self.num_problems
+        self._ws_cache_fwd = {}  # key -> {primal}
+        self._scs_solvers = {}  # i -> SCS solver instance (for direct SCS path)
+        self._scs_data_hash = None  # hash of (A, b) params to detect changes
+        self._scs_mapping = None  # {primal_slice, eq_dual_slice, ineq_dual_slice, c_p_slice}
 
         self._executor = ThreadPoolExecutor(max_workers=self.max_workers)
 
@@ -730,6 +733,7 @@ class _FFOLayer(torch.nn.Module):
 
         solver_args = {**default_solver_args, **solver_args}
         self._warm_start = bool(solver_args.get("warm_start", False))
+        self._ws_keys = solver_args.pop("ws_keys", None)
 
         if not self._initialized:
             B = self._infer_B_from_params(params)
@@ -831,26 +835,137 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                 return list(params)
 
             fwd_solver_iters = [0] * B
+            _fwd_solve_times = [0.0] * B
+
+            # ---- Direct SCS path: setup solvers for this forward pass ----
+            if mt._warm_start:
+                import scs as _scs
+                import time as _time_mod
+
+                # Detect if A/b changed by checking param tensor versions
+                _param_versions = tuple(
+                    p.data_ptr() if hasattr(p, 'data_ptr') else id(p)
+                    for p in params
+                )
+                if mt._scs_data_hash != _param_versions:
+                    # Use first problem to get the SCS data template via CVXPY
+                    b0 = ctx.bundles[0]
+                    prob0 = mt.problem_list[0]
+                    params_0_np = _slice_params_np(0)
+                    for pval, pparam in zip(params_0_np, b0["param_order"]):
+                        pparam.value = pval
+                    data0, _, _ = prob0.get_problem_data(
+                        solver=cp.SCS, ignore_dpp=True
+                    )
+                    cone = {
+                        'z': data0['dims'].zero,
+                        'l': data0['dims'].nonneg,
+                    }
+                    scs_args = dict(
+                        max_iters=int(mt._solver_args_fwd.get('max_iters', 2500)),
+                        eps_abs=float(mt._solver_args_fwd.get('eps', 1e-6)),
+                        eps_rel=float(mt._solver_args_fwd.get('eps', 1e-6)),
+                        verbose=False,
+                    )
+                    # Discover the mapping once
+                    if mt._scs_mapping is None:
+                        n_vars = sum(int(np.prod(v.shape)) for v in b0["variables"])
+                        n_eq = sum(int(np.prod(f.shape)) for f in b0["eq_functions"])
+                        n_ineq = sum(int(np.prod(f.shape)) for f in b0["scalar_ineq_functions"])
+                        # SCS x layout: [aux(n_vars), y_var(n_vars)]
+                        # SCS y layout: [aux_dual(n_vars), eq_dual(n_eq), ineq_dual(n_ineq)]
+                        mt._scs_mapping = {
+                            'primal_slice': slice(n_vars, 2 * n_vars),
+                            'eq_dual_slice': slice(n_vars, n_vars + n_eq),
+                            'ineq_dual_slice': slice(n_vars + n_eq, n_vars + n_eq + n_ineq),
+                            'c_p_slice': slice(n_vars, 2 * n_vars),
+                            'b_eq_slice': slice(n_vars, n_vars + n_eq),
+                        }
+
+                    # Store dimensions for later use
+                    mt._scs_c_dim = len(data0['c'])
+
+                    # Build SCS solvers in parallel (SCS releases GIL)
+                    scs_template = {
+                        'P': data0['P'],
+                        'A': data0['A'],
+                        'b': data0['b'].copy(),
+                        'c': data0['c'].copy(),
+                    }
+                    def _build_scs(j):
+                        sd = {k: (v.copy() if isinstance(v, np.ndarray) else v)
+                              for k, v in scs_template.items()}
+                        return _scs.SCS(sd, cone, **scs_args)
+
+                    with _limit_native_threads(1):
+                        futs = [mt._executor.submit(_build_scs, j) for j in range(B)]
+                        mt._scs_solvers = {j: f.result() for j, f in enumerate(futs)}
+                    mt._scs_data_hash = _param_versions
+
+                    # Mark that backward template needs to be built
+                    mt._bwd_scs_template = None
+
+                _m = mt._scs_mapping
 
             def _solve_one(i: int):
+                import time as _time
                 b = ctx.bundles[i]
                 prob = mt.problem_list[i]
 
                 params_i_np = _slice_params_np(i)
+                # Always set CVXPY params (backward pass needs them)
                 for pval, pparam in zip(params_i_np, b["param_order"]):
                     pparam.value = pval
 
-                if mt._warm_start:
-                    ws_fwd = getattr(mt, "_ws_primal_fwd", None)
-                    if ws_fwd is not None and ws_fwd[i] is not None:
-                        try:
-                            for v_id, v in enumerate(b["variables"]):
-                                v.value = ws_fwd[i][v_id]
-                        except Exception as e:
-                            print(f"[forward] problem {i} failed to access variable {v_id} value: {e!r}")
-                
+                _t0 = _time.perf_counter()
+
+                if mt._warm_start and i in mt._scs_solvers:
+                    # ---- Direct SCS path ----
+                    scs_solver = mt._scs_solvers[i]
+                    # Update c vector with current p (puzzle encoding)
+                    # p is at index 1 in params: [Q, p, G, h, A, b]
+                    p_np = params_i_np[1]  # the puzzle-specific parameter
+                    new_c = np.zeros(mt._scs_c_dim, dtype=float)
+                    new_c[_m['c_p_slice']] = p_np
+                    scs_solver.update(c=new_c)
+                    sol = scs_solver.solve()
+
+                    if sol['info']['status'] == 'solved' or sol['info']['status'] == 'solved_inaccurate':
+                        x_scs = sol['x']
+                        y_scs = sol['y']
+
+                        # Extract primal solution
+                        y_var = x_scs[_m['primal_slice']]
+                        for v_id, v in enumerate(b["variables"]):
+                            vshape = v.shape
+                            n_el = int(np.prod(vshape))
+                            sol_numpy[v_id][i, ...] = y_var[:n_el].reshape(vshape)
+
+                        # Extract dual values
+                        eq_d = y_scs[_m['eq_dual_slice']]
+                        offset = 0
+                        for c_id, f in enumerate(b["eq_functions"]):
+                            n_el = int(np.prod(f.shape))
+                            eq_dual[c_id][i, ...] = eq_d[offset:offset+n_el].reshape(f.shape)
+                            offset += n_el
+
+                        ineq_d = y_scs[_m['ineq_dual_slice']]
+                        offset = 0
+                        for j, g_expr in enumerate(b["scalar_ineq_functions"]):
+                            n_el = int(np.prod(g_expr.shape))
+                            scalar_ineq_dual[j][i, ...] = ineq_d[offset:offset+n_el].reshape(g_expr.shape)
+                            # slack = max(-(G@y - h), 0) = max(y_var, 0) for G=-I, h=0
+                            scalar_ineq_slack[j][i, ...] = np.maximum(y_var[offset:offset+n_el].reshape(g_expr.shape), 0.0)
+                            offset += n_el
+
+                        fwd_solver_iters[i] = sol['info']['iter']
+                        _fwd_solve_times[i] = _time.perf_counter() - _t0
+                        return  # skip CVXPY path
+                    else:
+                        print(f"[forward] SCS direct failed for problem {i}: {sol['info']['status']}, falling back to CVXPY")
+
+                # ---- CVXPY fallback path ----
                 try:
-                    # mt._solver_args_fwd['verbose'] = True
                     prob.solve(**mt._solver_args_fwd)
                 except Exception as e:
                     print(f"[forward] problem {i} solve failed: {e!r}")
@@ -858,7 +973,8 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                         prob.solve(solver=cp.OSQP, warm_start=False, verbose=False)
                     except Exception as e2:
                         raise RuntimeError(f"[forward] problem {i} solve failed: {e!r} {e2!r}")
-                
+                _fwd_solve_times[i] = _time.perf_counter() - _t0
+
                 if prob.status not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
                     raise RuntimeError(f"[forward] problem {i} status: {prob.status}")
 
@@ -867,14 +983,6 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
 
                 for v_id, v in enumerate(b["variables"]):
                     sol_numpy[v_id][i, ...] = v.value
-
-                if mt._warm_start:
-                    ws_fwd = getattr(mt, "_ws_primal_fwd", None)
-                    if ws_fwd is not None:
-                        try:
-                            ws_fwd[i] = [np.array(v.value, dtype=float, copy=True) for v in b["variables"]]
-                        except Exception:
-                            pass
 
                 for c_id, c in enumerate(b["eq_constraints"]):
                     eq_dual[c_id][i, ...] = c.dual_value
@@ -930,7 +1038,12 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                 # for i in range(B):
                 #     _solve_one(i) 
 
-            if mt.verbose:
+            if mt._warm_start:
+                total_fwd = sum(fwd_solver_iters)
+                max_solve = max(_fwd_solve_times)
+                sum_solve = sum(_fwd_solve_times)
+                print(f"[forward] iters: avg={total_fwd/max(B,1):.0f}, max_solve={max_solve:.3f}s, sum_solve={sum_solve:.3f}s")
+            elif mt.verbose:
                 total_fwd = sum(fwd_solver_iters)
                 print(f"[forward] solver iters: total={total_fwd}, avg={total_fwd/max(B,1):.1f}")
 
@@ -1017,8 +1130,69 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                 return list(params_src)
 
             bwd_solver_iters = [0] * B
+            _bwd_solve_times = [0.0] * B
+
+            # ---- Rebuild backward SCS template when params change ----
+            if mt._warm_start and (getattr(mt, '_bwd_scs_template', None) is None
+                                    or getattr(mt, '_bwd_param_hash', None) != id(ctx.params)):
+                import scipy.sparse as _sp_init
+                b0 = bundles[0]
+                prob0_bwd = mt.perturbed_problem_list[0]
+                n_vars_total = y_dim
+                n_eq_total = num_eq
+                # Set params and mask=1 so all mask entries exist in A
+                params_0_np = _slice_params_np(0)
+                for pval, pparam in zip(params_0_np, b0["param_order"]):
+                    pparam.value = pval
+                for dv in b0["dvar_params"]:
+                    dv.value = np.zeros(dv.shape)
+                for dp in b0.get("eq_dual_params", []):
+                    dp.value = np.zeros(dp.shape)
+                for dp in b0.get("scalar_ineq_dual_params", []):
+                    dp.value = np.zeros(dp.shape)
+                for mp in b0.get("scalar_active_mask_params", []):
+                    mp.value = np.ones(mp.shape)
+                bwd_data_ones, _, _ = prob0_bwd.get_problem_data(
+                    solver=cp.SCS, ignore_dpp=True
+                )
+                bwd_A_csc = _sp_init.csc_matrix(bwd_data_ones['A'])
+                mask_row_start = n_vars_total + n_eq_total
+                mask_data_indices = np.empty(n_vars_total, dtype=int)
+                for k in range(n_vars_total):
+                    col_s, col_e = bwd_A_csc.indptr[k], bwd_A_csc.indptr[k+1]
+                    rows = bwd_A_csc.indices[col_s:col_e]
+                    idx = np.searchsorted(rows, mask_row_start + k)
+                    mask_data_indices[k] = col_s + idx
+                # Get baseline c with mask=0
+                for mp in b0.get("scalar_active_mask_params", []):
+                    mp.value = np.zeros(mp.shape)
+                bwd_data_base, _, _ = prob0_bwd.get_problem_data(
+                    solver=cp.SCS, ignore_dpp=True
+                )
+                bwd_eps = float(mt._solver_args_bwd.get('eps', 1e-5))
+                mt._bwd_scs_template = {
+                    'c_base': bwd_data_base['c'].copy(),
+                    'b': bwd_data_base['b'].copy(),
+                    'P': bwd_data_ones['P'],
+                    'A_base_data': bwd_A_csc.data.copy(),
+                    'A_base_indices': bwd_A_csc.indices.copy(),
+                    'A_base_indptr': bwd_A_csc.indptr.copy(),
+                    'A_shape': bwd_A_csc.shape,
+                    'mask_data_indices': mask_data_indices,
+                    'alpha': float(b0['alpha']),
+                    'cone': {
+                        'z': bwd_data_ones['dims'].zero,
+                        'l': bwd_data_ones['dims'].nonneg,
+                    },
+                    'scs_args': dict(
+                        max_iters=int(mt._solver_args_bwd.get('max_iters', 2500)),
+                        eps_abs=bwd_eps, eps_rel=bwd_eps, verbose=False,
+                    ),
+                }
+                mt._bwd_param_hash = id(ctx.params)
 
             def _solve_perturbed_one(i: int):
+                import time as _time
                 b = bundles[i]
                 prob = mt.perturbed_problem_list[i]
 
@@ -1086,6 +1260,80 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                         b["pnorm_xstar_params"][local_id][v_id].value = ctx.pnorm_xstar[local_id][v_id][i]
                         b["pnorm_grad_params"][local_id][v_id].value = ctx.pnorm_grad[local_id][v_id][i]
 
+                _bwd_t0 = _time.perf_counter()
+                if mt._warm_start and hasattr(mt, '_bwd_scs_template'):
+                    # ---- Direct SCS path for backward (no CVXPY) ----
+                    import scs as _scs_bwd
+                    import scipy.sparse as _sp
+                    try:
+                        tmpl = mt._bwd_scs_template
+
+                        # Backward SCS variable order: x = [y, t] (opposite of forward)
+                        # c[0:y_dim] = p + dvar/alpha - lambda (all y-linear terms)
+                        # c[y_dim:2*y_dim] = 0 (t has no linear cost)
+                        new_c = tmpl['c_base'].copy()
+                        dvar_i = dvals_i[0].ravel()
+                        lam_i = np.asarray(b["scalar_ineq_dual_params"][0].value, dtype=float).ravel()
+                        p_i = params_i_np[1].ravel()
+                        new_c[:y_dim] = p_i + dvar_i / tmpl['alpha'] - lam_i
+
+                        # Construct A: copy base, update mask diagonal
+                        A_data = tmpl['A_base_data'].copy()
+                        mask_i = np.asarray(b["scalar_active_mask_params"][0].value, dtype=float).ravel()
+                        mask_data_idx = tmpl['mask_data_indices']
+                        for k in range(y_dim):
+                            A_data[mask_data_idx[k]] = -mask_i[k]
+                        A_sparse = _sp.csc_matrix(
+                            (A_data, tmpl['A_base_indices'], tmpl['A_base_indptr']),
+                            shape=tmpl['A_shape'],
+                        )
+
+                        # Update b: b[y_dim:y_dim+num_eq] = b_eq (index 5 in params)
+                        # b vector matches the A rows: [aux(y_dim), eq(num_eq), mask(y_dim)]
+                        new_b = tmpl['b'].copy()
+                        b_eq_i = params_i_np[5].ravel()
+                        new_b[y_dim:y_dim + num_eq] = b_eq_i  # same position confirmed earlier
+
+                        bwd_sd = {
+                            'P': tmpl['P'], 'A': A_sparse,
+                            'b': new_b, 'c': new_c,
+                        }
+                        bwd_solver = _scs_bwd.SCS(bwd_sd, tmpl['cone'], **tmpl['scs_args'])
+                        bwd_sol = bwd_solver.solve()
+
+                        if bwd_sol['info']['status'] in ('solved', 'solved_inaccurate'):
+                            x_bwd = bwd_sol['x']
+                            y_bwd = bwd_sol['y']
+                            bwd_solver_iters[i] = bwd_sol['info']['iter']
+
+                            y_var = x_bwd[:y_dim]
+                            for j, v in enumerate(b["variables"]):
+                                vshape = v.shape
+                                n_el = int(np.prod(vshape))
+                                new_sol_lagrangian[j][i, ...] = y_var[:n_el].reshape(vshape)
+
+                            eq_d = y_bwd[y_dim:y_dim + num_eq]
+                            offset = 0
+                            for c_id, f in enumerate(b["eq_functions"]):
+                                n_el = int(np.prod(f.shape))
+                                new_eq_dual[c_id][i, ...] = eq_d[offset:offset+n_el].reshape(f.shape)
+                                offset += n_el
+
+                            active_d = y_bwd[y_dim + num_eq:]
+                            offset = 0
+                            for c_id, c_expr in enumerate(b["active_eq_constraints"]):
+                                n_el = int(np.prod(c_expr.shape))
+                                new_active_dual[c_id][i, ...] = active_d[offset:offset+n_el].reshape(c_expr.shape)
+                                offset += n_el
+
+                            _bwd_solve_times[i] = _time.perf_counter() - _bwd_t0
+                            return
+                        else:
+                            print(f"[backward] SCS direct failed for {i}: {bwd_sol['info']['status']}, fallback")
+                    except Exception as e:
+                        print(f"[backward] SCS direct error for {i}: {e!r}, fallback")
+
+                # ---- CVXPY fallback path ----
                 try:
                     prob.solve(**mt._solver_args_bwd)
                 except Exception as e:
@@ -1094,7 +1342,7 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                         b["perturbed_problem"].solve(solver=cp.OSQP, eps_abs=1e-4, eps_rel=1e-4, warm_start=True, verbose=False)
                     except Exception as e2:
                         raise RuntimeError(f"[backward] problem {i} perturbed solve failed: {e!r} {e2!r}")
-                
+
                 if prob.status not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
                     raise RuntimeError(f"[backward] perturbed problem {i} status: {prob.status}")
 
@@ -1137,9 +1385,11 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                 for f in futs:
                     f.result()
 
-            if mt.verbose:
+            if mt._warm_start or mt.verbose:
                 total_bwd = sum(bwd_solver_iters)
-                print(f"[backward] solver iters: total={total_bwd}, avg={total_bwd/max(B,1):.1f}")
+                bwd_max = max(_bwd_solve_times)
+                bwd_sum = sum(_bwd_solve_times)
+                print(f"[backward] iters: avg={total_bwd/max(B,1):.0f}, max_solve={bwd_max:.3f}s, sum_solve={bwd_sum:.3f}s")
 
             new_sol = [to_torch(v, ctx.dtype, ctx.device) for v in new_sol_lagrangian]
             vars_old = [to_torch(ctx.sol_numpy[j], ctx.dtype, ctx.device) for j in range(num_vars)]
