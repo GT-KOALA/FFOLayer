@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(python ffo_sdp.py)",
-      "Bash(python sudoku/main_sudoku.py --method \"ffocp_eq\" --seed 1 --epochs 1 --batch_size 8 --n 3 --warm_start)",
-      "Bash(python sudoku/main_sudoku.py --method \"ffocp_eq\" --seed 1 --epochs 1 --batch_size 4 --n 2 --warm_start)"
-    ]
-  }
-}

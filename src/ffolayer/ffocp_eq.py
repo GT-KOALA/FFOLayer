@@ -691,7 +691,8 @@ class _FFOLayer(torch.nn.Module):
         self._ref_param_order = bundles[0]["param_order"]
         self._ref_vars = bundles[0]["variables"]
 
-        self._ws_cache_fwd = {}  # key -> {primal}
+        self._ws_cache_fwd = {}  # key -> {scs_x, scs_y, scs_s}
+        self._ws_cache_bwd = {}  # key -> {scs_x, scs_y, scs_s}
         self._scs_solvers = {}  # i -> SCS solver instance (for direct SCS path)
         self._scs_data_hash = None  # hash of (A, b) params to detect changes
         self._scs_mapping = None  # {primal_slice, eq_dual_slice, ineq_dual_slice, c_p_slice}
@@ -928,11 +929,31 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                     new_c = np.zeros(mt._scs_c_dim, dtype=float)
                     new_c[_m['c_p_slice']] = p_np
                     scs_solver.update(c=new_c)
-                    sol = scs_solver.solve()
+
+                    # Warm start from cached SCS solution (same puzzle, prev epoch)
+                    ws_key = mt._ws_keys[i] if mt._ws_keys is not None else None
+                    ws_cached = mt._ws_cache_fwd.get(ws_key) if ws_key is not None else None
+                    if ws_cached is not None and 'scs_x' in ws_cached:
+                        sol = scs_solver.solve(
+                            warm_start=True,
+                            x=ws_cached['scs_x'],
+                            y=ws_cached['scs_y'],
+                            s=ws_cached['scs_s'],
+                        )
+                    else:
+                        sol = scs_solver.solve(warm_start=False)
 
                     if sol['info']['status'] == 'solved' or sol['info']['status'] == 'solved_inaccurate':
                         x_scs = sol['x']
                         y_scs = sol['y']
+
+                        # Cache full SCS state for warm starting next epoch
+                        if ws_key is not None:
+                            mt._ws_cache_fwd[ws_key] = {
+                                'scs_x': sol['x'].copy(),
+                                'scs_y': sol['y'].copy(),
+                                'scs_s': sol['s'].copy(),
+                            }
 
                         # Extract primal solution
                         y_var = x_scs[_m['primal_slice']]
@@ -1042,7 +1063,8 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                 total_fwd = sum(fwd_solver_iters)
                 max_solve = max(_fwd_solve_times)
                 sum_solve = sum(_fwd_solve_times)
-                print(f"[forward] iters: avg={total_fwd/max(B,1):.0f}, max_solve={max_solve:.3f}s, sum_solve={sum_solve:.3f}s")
+                fwd_cache_size = len(mt._ws_cache_fwd)
+                print(f"[forward] iters: avg={total_fwd/max(B,1):.0f}, max_solve={max_solve:.3f}s, sum_solve={sum_solve:.3f}s, cache={fwd_cache_size}")
             elif mt.verbose:
                 total_fwd = sum(fwd_solver_iters)
                 print(f"[forward] solver iters: total={total_fwd}, avg={total_fwd/max(B,1):.1f}")
@@ -1299,7 +1321,17 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                             'b': new_b, 'c': new_c,
                         }
                         bwd_solver = _scs_bwd.SCS(bwd_sd, tmpl['cone'], **tmpl['scs_args'])
-                        bwd_sol = bwd_solver.solve()
+
+                        # Warm start backward from cached SCS state
+                        bwd_ws_key = mt._ws_keys[i] if mt._ws_keys is not None else None
+                        bwd_ws = mt._ws_cache_bwd.get(bwd_ws_key) if bwd_ws_key is not None else None
+                        if bwd_ws is not None:
+                            bwd_sol = bwd_solver.solve(
+                                warm_start=True,
+                                x=bwd_ws['scs_x'], y=bwd_ws['scs_y'], s=bwd_ws['scs_s'],
+                            )
+                        else:
+                            bwd_sol = bwd_solver.solve(warm_start=False)
 
                         if bwd_sol['info']['status'] in ('solved', 'solved_inaccurate'):
                             x_bwd = bwd_sol['x']
@@ -1325,6 +1357,14 @@ def _make_ffo_fn(mt: "_FFOLayer", solver_args: dict):
                                 n_el = int(np.prod(c_expr.shape))
                                 new_active_dual[c_id][i, ...] = active_d[offset:offset+n_el].reshape(c_expr.shape)
                                 offset += n_el
+
+                            # Cache backward SCS state
+                            if bwd_ws_key is not None:
+                                mt._ws_cache_bwd[bwd_ws_key] = {
+                                    'scs_x': bwd_sol['x'].copy(),
+                                    'scs_y': bwd_sol['y'].copy(),
+                                    'scs_s': bwd_sol['s'].copy(),
+                                }
 
                             _bwd_solve_times[i] = _time.perf_counter() - _bwd_t0
                             return
