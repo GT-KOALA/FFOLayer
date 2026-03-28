@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH -A gts-kwang692-paid                  # account to which job is charged
 #SBATCH -N 1 --ntasks-per-node=1         # number of nodes and cores per node required
-#SBATCH --mem-per-cpu=48G                 # memory per core
-#SBATCH -t 5:00:00                           # duration of the job
+#SBATCH --mem-per-cpu=16G                 # memory per core
+#SBATCH -t 1:00:00                           # duration of the job
 #SBATCH --cpus-per-task=8
 #SBATCH --output=/storage/home/hcoda1/9/zzhao628/r-kwang692-0/sudoku_sbatch_output/%j.out
 
@@ -27,7 +27,7 @@ echo "Running seed=$seed"
 
 epochs=1
 batchSize=8
-n=2
+n=3
 # methods=("ffocp_eq" "cvxpylayer" "lpgd" "ffoqp_eq_schur" "qpth" "bpqp" "dqp" ) # "altdiff"
 # methods=("dqp")
 methods=("ffocp_eq")
